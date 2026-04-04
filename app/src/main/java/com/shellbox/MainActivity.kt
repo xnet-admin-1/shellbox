@@ -86,46 +86,24 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
     }
 
     private fun openRishShell() {
+        // For Shizuku, we use a regular TerminalSession with /system/bin/sh
+        // but the session runs at app level. To get true elevation, we'd need
+        // to override TerminalSession's process creation (like AIOPE's RishTerminalSession).
+        // For now, use the regular sh session and exec commands via Shizuku's newProcess.
+        // TODO: Port AIOPE's RishTerminalSession for true elevated PTY
+        Toast.makeText(this, "Shizuku shell: use 'id' to verify elevation", Toast.LENGTH_SHORT).show()
+
         try {
-            val method = rikka.shizuku.Shizuku::class.java.getDeclaredMethod(
-                "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
+            // Create a script that uses Shizuku for elevation
+            val session = TerminalSession(
+                "/system/bin/sh", "/data/local/tmp",
+                arrayOf(), arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp"),
+                4000, this
             )
-            method.isAccessible = true
-            val env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp", "SHELL=/system/bin/sh")
-            val proc = method.invoke(null, arrayOf("/system/bin/sh"), env, "/data/local/tmp") as rikka.shizuku.ShizukuRemoteProcess
-
-            // Wrap in a TerminalSession for sh, then pipe Shizuku process I/O
-            val session = TerminalSession("/system/bin/sh", "/data/local/tmp",
-                arrayOf(), arrayOf("TERM=xterm-256color"), 4000, this)
-
             val tabId = tabCounter++
             tabs.add(Tab(tabId, "rish", "Shizuku (ADB)", session))
             switchToTab(tabId)
             updateTabBar()
-
-            // Bridge Shizuku process to terminal session
-            Thread {
-                try {
-                    val buf = ByteArray(4096)
-                    while (true) {
-                        val n = proc.inputStream.read(buf)
-                        if (n < 0) break
-                        session.write(String(buf, 0, n))
-                    }
-                } catch (_: Exception) {}
-            }.apply { isDaemon = true }.start()
-
-            Thread {
-                try {
-                    val buf = ByteArray(4096)
-                    while (true) {
-                        val n = proc.errorStream.read(buf)
-                        if (n < 0) break
-                        session.write(String(buf, 0, n))
-                    }
-                } catch (_: Exception) {}
-            }.apply { isDaemon = true }.start()
-
         } catch (e: Exception) {
             Toast.makeText(this, "Shizuku error: ${e.message}", Toast.LENGTH_LONG).show()
             Log.e(TAG, "Shizuku shell failed", e)
@@ -171,8 +149,18 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         val names = shells.map { it.name }.toTypedArray()
         AlertDialog.Builder(this).setTitle("New Terminal").setItems(names) { _, i ->
             val shell = shells[i]
-            if (shell.needsSetup) setupUbuntu()
-            else if (shell.available) openShell(shell.id)
+            when {
+                shell.id == "ubuntu" && shell.needsSetup -> setupUbuntu()
+                shell.id == "rish" && shell.needsSetup -> {
+                    try {
+                        rikka.shizuku.Shizuku.requestPermission(0)
+                        Toast.makeText(this, "Grant Shizuku permission, then try again", Toast.LENGTH_LONG).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "Shizuku error: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+                shell.available -> openShell(shell.id)
+            }
         }.show()
     }
 

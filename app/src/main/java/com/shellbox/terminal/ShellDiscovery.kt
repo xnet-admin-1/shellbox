@@ -58,11 +58,18 @@ object ShellDiscovery {
             ))
         }
 
-        // 3. Shizuku rish — use Shizuku API for elevated shell
-        if (RishExecutor.isShizukuReady()) {
+        // 3. Shizuku rish — always show, request permission on tap
+        val shizukuAvailable = try { rikka.shizuku.Shizuku.pingBinder() } catch (_: Exception) { false }
+        if (shizukuAvailable) {
+            val hasPermission = RishExecutor.isShizukuReady()
             shells.add(Shell(
-                id = "rish", name = "Shizuku Shell (ADB)",
-                command = "SHIZUKU", args = arrayOf(), env = arrayOf(), cwd = ""
+                id = "rish",
+                name = if (hasPermission) "Shizuku Shell (ADB)" else "Shizuku (tap to grant)",
+                command = "/system/bin/sh", args = arrayOf(),
+                env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp"),
+                cwd = "/data/local/tmp",
+                available = hasPermission,
+                needsSetup = !hasPermission
             ))
         }
 
@@ -97,7 +104,7 @@ object ShellDiscovery {
 
         args.addAll(listOf(
             "-r", rootfs, "-0", "--link2symlink", "--sysvipc", "-L",
-            "-w", "/root",
+            "-w", "/",
             "/usr/bin/env",
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "HOME=/root", "USER=root", "TERM=xterm-256color",
