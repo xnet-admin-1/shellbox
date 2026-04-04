@@ -59,6 +59,10 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
 
+        // Ensure home/tmp dirs exist
+        java.io.File(filesDir, "home").mkdirs()
+        java.io.File(filesDir, "tmp").mkdirs()
+
         ProotBootstrap.ensurePatched(this) {}
         openShell("sh")
 
@@ -99,11 +103,12 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         tabs.forEach { tab ->
             val btn = Button(this).apply {
                 text = "${tab.title}${if (tabs.size > 1) " ✕" else ""}"
-                textSize = 12f; setTextColor(if (tab.id == activeTabId) Color.WHITE else Color.GRAY)
+                textSize = 11f; setTextColor(if (tab.id == activeTabId) Color.WHITE else Color.GRAY)
                 setBackgroundColor(if (tab.id == activeTabId) 0xFF333333.toInt() else Color.TRANSPARENT)
-                setPadding(16, 4, 16, 4)
+                setPadding(16, 0, 16, 0); minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT)
                 setOnClickListener { switchToTab(tab.id) }
-                setOnLongClickListener { if (tabs.size > 1) { tab.session.finishIfRunning() }; true }
+                setOnLongClickListener { if (tabs.size > 1) { tab.session.finishIfRunning(); removeTabBySession(tab.session) }; true }
             }
             tabBar.addView(btn)
         }
@@ -114,8 +119,8 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         val names = shells.map { it.name }.toTypedArray()
         AlertDialog.Builder(this).setTitle("New Terminal").setItems(names) { _, i ->
             val shell = shells[i]
-            if (shell.id == "ubuntu" && !ProotBootstrap.isInstalled(this)) setupUbuntu()
-            else openShell(shell.id)
+            if (shell.needsSetup) setupUbuntu()
+            else if (shell.available) openShell(shell.id)
         }.show()
     }
 
@@ -140,10 +145,10 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         var ctrlActive = false
         keys.forEach { (label, value) ->
             val btn = Button(this).apply {
-                text = label; textSize = 11f; setTextColor(Color.WHITE)
-                setBackgroundColor(0xFF2D2D2D.toInt()); setPadding(12, 4, 12, 4)
-                minWidth = 0; minimumWidth = 0
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(2, 0, 2, 0) }
+                text = label; textSize = 12f; setTextColor(Color.WHITE)
+                setBackgroundColor(0xFF2D2D2D.toInt()); setPadding(20, 8, 20, 8)
+                minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(3, 2, 3, 2) }
             }
             if (label == "CTRL") {
                 btn.setOnClickListener { ctrlActive = !ctrlActive; btn.setBackgroundColor(if (ctrlActive) 0xFF7C4DFF.toInt() else 0xFF2D2D2D.toInt()) }

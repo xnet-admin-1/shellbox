@@ -5,9 +5,6 @@ import com.shellbox.shell.ProotBootstrap
 import com.shellbox.shell.RishExecutor
 import java.io.File
 
-/**
- * Discovers available shell backends. Pure Kotlin — no Python dependency.
- */
 object ShellDiscovery {
 
     data class Shell(
@@ -16,7 +13,9 @@ object ShellDiscovery {
         val command: String,
         val args: Array<String>,
         val env: Array<String>,
-        val cwd: String
+        val cwd: String,
+        val available: Boolean = true,
+        val needsSetup: Boolean = false
     )
 
     fun getShells(ctx: Context): List<Shell> {
@@ -24,27 +23,37 @@ object ShellDiscovery {
         val filesDir = ctx.filesDir.absolutePath
         val nativeDir = ctx.applicationInfo.nativeLibraryDir
 
-        // 1. Android sh — always available
+        // Ensure dirs exist
+        File(filesDir, "home").mkdirs()
+        File(filesDir, "tmp").mkdirs()
+
+        // 1. Android sh
         shells.add(Shell(
             id = "sh", name = "Android Shell",
-            command = "/system/bin/sh", args = arrayOf("-l"),
-            env = arrayOf("TERM=xterm-256color", "HOME=$filesDir/home", "TMPDIR=$filesDir/tmp"),
-            cwd = "$filesDir/home"
+            command = "/system/bin/sh", args = arrayOf(),
+            env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp", "TMPDIR=$filesDir/tmp",
+                "PATH=/system/bin:/system/xbin"),
+            cwd = "/data/local/tmp"
         ))
 
-        // 2. Ubuntu proot
-        if (ProotBootstrap.isInstalled(ctx)) {
-            val prootBin = ProotBootstrap.findProotXed(ctx)
-            if (prootBin != null) {
-                val rootfs = ProotBootstrap.rootfsDir(ctx).absolutePath
-                val args = buildProotArgs(rootfs, filesDir)
-                val env = buildProotEnv(filesDir, nativeDir)
-                shells.add(Shell(
-                    id = "ubuntu", name = "Ubuntu (proot)",
-                    command = prootBin.absolutePath, args = args, env = env,
-                    cwd = "/root"
-                ))
-            }
+        // 2. Ubuntu proot — always show, mark if needs setup
+        val ubuntuInstalled = ProotBootstrap.isInstalled(ctx)
+        val prootBin = ProotBootstrap.findProotXed(ctx)
+        if (prootBin != null && ubuntuInstalled) {
+            val rootfs = ProotBootstrap.rootfsDir(ctx).absolutePath
+            shells.add(Shell(
+                id = "ubuntu", name = "Ubuntu (proot)",
+                command = prootBin.absolutePath,
+                args = buildProotArgs(rootfs, filesDir),
+                env = buildProotEnv(filesDir, nativeDir),
+                cwd = "/root"
+            ))
+        } else {
+            shells.add(Shell(
+                id = "ubuntu", name = "Ubuntu (setup needed)",
+                command = "", args = arrayOf(), env = arrayOf(), cwd = "",
+                available = false, needsSetup = true
+            ))
         }
 
         // 3. Shizuku rish
@@ -52,7 +61,7 @@ object ShellDiscovery {
             shells.add(Shell(
                 id = "rish", name = "Shizuku Shell",
                 command = "/system/bin/sh", args = arrayOf(),
-                env = arrayOf("TERM=xterm-256color"),
+                env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp"),
                 cwd = "/data/local/tmp"
             ))
         }
