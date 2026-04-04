@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 object ProotBootstrap {
 
     private const val TAG = "ProotBootstrap"
-    private const val BOX_ROOTFS_VERSION = "rootfs_box_v2"
+    private const val BOX_ROOTFS_VERSION = "rootfs_box_v3"
 
     fun envDir(ctx: Context) = File(ctx.filesDir, "env")
     fun rootfsDir(ctx: Context) = File(envDir(ctx), "ubuntu")
@@ -484,11 +484,28 @@ export LC_ALL=C.UTF-8
                 1016 to "vpn", 1017 to "keystore", 1018 to "usb", 1019 to "drm",
                 1020 to "mdnsr", 1021 to "gps", 1023 to "media_rw", 1024 to "mtp",
                 1026 to "drmrpc", 1027 to "nfc", 1028 to "sdcard_r", 1029 to "clat",
+                1030 to "loop_radio", 1031 to "mediadrm", 1032 to "package_info",
+                1033 to "sdcard_pics", 1034 to "sdcard_av", 1035 to "sdcard_all",
+                1036 to "logd", 1037 to "shared_relro", 1038 to "dbus", 1039 to "tlsdate",
+                1040 to "mediaex", 1041 to "audioserver", 1042 to "metrics_coll",
+                1043 to "metricsd", 1044 to "webserv", 1045 to "debuggerd",
+                1046 to "mediacodec", 1047 to "cameraserver", 1048 to "firewall",
+                1049 to "trunks", 1050 to "nvram", 1051 to "dns", 1052 to "dns_tether",
+                1053 to "webview_zygote", 1054 to "vehicle_network",
+                1055 to "media_audio", 1056 to "media_video", 1057 to "media_image",
+                1058 to "tombstoned", 1059 to "media_obb", 1060 to "ese",
+                1061 to "ota_update", 1062 to "automotive_evs", 1063 to "lowpan",
+                1065 to "statsd", 1066 to "incidentd", 1067 to "secure_element",
+                1068 to "lmkd", 1069 to "llkd", 1070 to "iorapd", 1071 to "gpu_service",
+                1072 to "network_stack", 1073 to "gsid", 1074 to "fsverity_cert",
+                1075 to "credstore", 1076 to "external_storage", 1077 to "ext_data_rw",
+                1078 to "ext_obb_rw",
                 2000 to "shell", 2001 to "cache", 2002 to "diag",
                 3001 to "aid_net_bt_admin", 3002 to "aid_net_bt",
                 3003 to "aid_inet", 3004 to "aid_net_raw", 3005 to "aid_net_admin",
                 3006 to "aid_net_bw_stats", 3007 to "aid_net_bw_acct",
-                3008 to "aid_readproc", 3009 to "aid_wakelock",
+                3008 to "aid_readproc", 3009 to "aid_wakelock", 3010 to "aid_uhid",
+                3011 to "aid_readtracefs", 3012 to "aid_debugfs_restrict",
                 9997 to "aid_everybody", 9998 to "aid_misc", 9999 to "aid_nobody"
             )
             val toAdd = knownGids.filter { (gid, _) -> ":$gid:" !in existing }
