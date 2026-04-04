@@ -21,6 +21,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.shellbox.service.ShellBoxService
 import com.shellbox.shell.ProotBootstrap
+import com.shellbox.shell.RishExecutor
 import com.shellbox.terminal.ShellDiscovery
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
@@ -73,11 +74,62 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         val shells = ShellDiscovery.getShells(this)
         val shell = shells.firstOrNull { it.id == shellId } ?: shells.first()
 
+        if (shell.id == "rish") {
+            openRishShell(); return
+        }
+
         val session = TerminalSession(shell.command, shell.cwd, shell.args, shell.env, 4000, this)
         val tabId = tabCounter++
         tabs.add(Tab(tabId, shell.id, shell.name, session))
         switchToTab(tabId)
         updateTabBar()
+    }
+
+    private fun openRishShell() {
+        try {
+            val method = rikka.shizuku.Shizuku::class.java.getDeclaredMethod(
+                "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
+            )
+            method.isAccessible = true
+            val env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp", "SHELL=/system/bin/sh")
+            val proc = method.invoke(null, arrayOf("/system/bin/sh"), env, "/data/local/tmp") as rikka.shizuku.ShizukuRemoteProcess
+
+            // Wrap in a TerminalSession for sh, then pipe Shizuku process I/O
+            val session = TerminalSession("/system/bin/sh", "/data/local/tmp",
+                arrayOf(), arrayOf("TERM=xterm-256color"), 4000, this)
+
+            val tabId = tabCounter++
+            tabs.add(Tab(tabId, "rish", "Shizuku (ADB)", session))
+            switchToTab(tabId)
+            updateTabBar()
+
+            // Bridge Shizuku process to terminal session
+            Thread {
+                try {
+                    val buf = ByteArray(4096)
+                    while (true) {
+                        val n = proc.inputStream.read(buf)
+                        if (n < 0) break
+                        session.write(String(buf, 0, n))
+                    }
+                } catch (_: Exception) {}
+            }.apply { isDaemon = true }.start()
+
+            Thread {
+                try {
+                    val buf = ByteArray(4096)
+                    while (true) {
+                        val n = proc.errorStream.read(buf)
+                        if (n < 0) break
+                        session.write(String(buf, 0, n))
+                    }
+                } catch (_: Exception) {}
+            }.apply { isDaemon = true }.start()
+
+        } catch (e: Exception) {
+            Toast.makeText(this, "Shizuku error: ${e.message}", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "Shizuku shell failed", e)
+        }
     }
 
     private fun switchToTab(tabId: Int) {
@@ -145,10 +197,10 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         var ctrlActive = false
         keys.forEach { (label, value) ->
             val btn = Button(this).apply {
-                text = label; textSize = 12f; setTextColor(Color.WHITE)
-                setBackgroundColor(0xFF2D2D2D.toInt()); setPadding(20, 8, 20, 8)
+                text = label; textSize = 14f; setTextColor(Color.WHITE)
+                setBackgroundColor(0xFF2D2D2D.toInt()); setPadding(24, 12, 24, 12)
                 minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(3, 2, 3, 2) }
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(3, 4, 3, 4) }
             }
             if (label == "CTRL") {
                 btn.setOnClickListener { ctrlActive = !ctrlActive; btn.setBackgroundColor(if (ctrlActive) 0xFF7C4DFF.toInt() else 0xFF2D2D2D.toInt()) }

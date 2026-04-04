@@ -41,6 +41,8 @@ object ShellDiscovery {
         val prootBin = ProotBootstrap.findProotXed(ctx)
         if (prootBin != null && ubuntuInstalled) {
             val rootfs = ProotBootstrap.rootfsDir(ctx).absolutePath
+            // Ensure /root exists in rootfs
+            java.io.File(rootfs, "root").mkdirs()
             shells.add(Shell(
                 id = "ubuntu", name = "Ubuntu (proot)",
                 command = prootBin.absolutePath,
@@ -56,13 +58,11 @@ object ShellDiscovery {
             ))
         }
 
-        // 3. Shizuku rish
+        // 3. Shizuku rish — use Shizuku API for elevated shell
         if (RishExecutor.isShizukuReady()) {
             shells.add(Shell(
-                id = "rish", name = "Shizuku Shell",
-                command = "/system/bin/sh", args = arrayOf(),
-                env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp"),
-                cwd = "/data/local/tmp"
+                id = "rish", name = "Shizuku Shell (ADB)",
+                command = "SHIZUKU", args = arrayOf(), env = arrayOf(), cwd = ""
             ))
         }
 
