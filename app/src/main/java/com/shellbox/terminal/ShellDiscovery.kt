@@ -104,7 +104,7 @@ object ShellDiscovery {
 
         args.addAll(listOf(
             "-r", rootfs, "-0", "--link2symlink", "--sysvipc", "-L",
-            "-w", "/",
+            "-w", "/root",
             "/usr/bin/env",
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "HOME=/root", "USER=root", "TERM=xterm-256color",

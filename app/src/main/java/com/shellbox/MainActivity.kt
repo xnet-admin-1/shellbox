@@ -78,7 +78,7 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
             openRishShell(); return
         }
 
-        val session = TerminalSession(shell.command, shell.cwd, shell.args, shell.env, 4000, this)
+        val session = TerminalSession(shell.command, "/", shell.args, shell.env, 4000, this)
         val tabId = tabCounter++
         tabs.add(Tab(tabId, shell.id, shell.name, session))
         switchToTab(tabId)
