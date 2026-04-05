@@ -1,10 +1,10 @@
 name: "Build APK"
-run-name: "MCPShell — build with latest Box binaries"
+run-name: "ShellBox — build with latest Box binaries"
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main]
     paths-ignore: ["*.md"]
 
 env:
@@ -32,14 +32,11 @@ jobs:
         run: |
           JNILIBS="app/src/main/jniLibs/arm64-v8a"
           mkdir -p "$JNILIBS"
-
           for bin in libproot-xed.so libproot.so libproot32.so libtalloc.so libbsdtar.so; do
             echo "Downloading $bin..."
             curl -fSL -o "$JNILIBS/$bin" \
               "https://github.com/${{ env.BOX_REPO }}/releases/download/native-latest/$bin"
           done
-
-          echo "=== arm64-v8a binaries ==="
           ls -lh "$JNILIBS/"
 
       - name: Setup Gradle
@@ -48,15 +45,19 @@ jobs:
       - name: Build debug APK
         run: chmod +x gradlew && ./gradlew :app:assembleDebug
 
+      - name: Rename APK
+        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/shellbox-v8a-debug.apk
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "latest"
-          name: "MCPShell (latest)"
+          name: "ShellBox (latest)"
           body: |
-            MCPShell debug APK built with latest Box native binaries.
+            ShellBox debug APK — standalone terminal with real PTY.
 
-            Native binaries from [`${{ env.BOX_REPO }}` native-latest](https://github.com/${{ env.BOX_REPO }}/releases/tag/native-latest).
-          files: app/build/outputs/apk/debug/app-debug.apk
+            **Shells:** Android sh, Ubuntu 24.04 (proot), Shizuku (ADB uid=2000)
+            **Native binaries** from [`${{ env.BOX_REPO }}` native-latest](https://github.com/${{ env.BOX_REPO }}/releases/tag/native-latest)
+          files: app/build/outputs/apk/debug/shellbox-v8a-debug.apk
           draft: false
           prerelease: false
