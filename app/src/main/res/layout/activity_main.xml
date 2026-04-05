@@ -37,7 +37,7 @@
     </HorizontalScrollView>
 
     <!-- Terminal -->
-    <com.termux.view.TerminalView
+    <com.shellbox.terminal.view.TerminalView
         android:id="@+id/terminalView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
