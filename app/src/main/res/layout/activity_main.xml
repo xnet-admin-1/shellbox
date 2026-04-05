@@ -46,20 +46,11 @@
         android:focusableInTouchMode="true" />
 
     <!-- Extra keys -->
-    <HorizontalScrollView
-        android:id="@+id/extraKeysScroll"
+    <LinearLayout
+        android:id="@+id/extraKeys"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#1E1E1E"
-        android:scrollbars="none">
-        <LinearLayout
-            android:id="@+id/extraKeys"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingHorizontal="4dp"
-            android:paddingVertical="2dp" />
-    </HorizontalScrollView>
+        android:orientation="horizontal"
+        android:background="#020817" />
 
 </LinearLayout>

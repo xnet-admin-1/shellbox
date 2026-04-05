@@ -163,39 +163,107 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
         }.start()
     }
 
-    // ── Extra keys ────────────────────────────────────────────────────────────
+    // ── Sticky key bar (ported from AIOPE) ──────────────────────────────────
+
+    enum class StickyState { IDLE, ARMED, LOCKED }
+
+    data class StickyKey(
+        val label: String, val isModifier: Boolean,
+        val instantSeq: String = "",
+        var state: StickyState = StickyState.IDLE,
+        var view: android.widget.TextView? = null
+    )
+
+    private val stickyKeys = listOf(
+        StickyKey("ESC", false, instantSeq = "\u001b"),
+        StickyKey("TAB", false, instantSeq = "\t"),
+        StickyKey("CTRL", true),
+        StickyKey("ALT", true),
+        StickyKey("↑", false, instantSeq = "\u001b[A"),
+        StickyKey("↓", false, instantSeq = "\u001b[B"),
+        StickyKey("←", false, instantSeq = "\u001b[D"),
+        StickyKey("→", false, instantSeq = "\u001b[C"),
+        StickyKey("HOME", false, instantSeq = "\u001b[H"),
+        StickyKey("END", false, instantSeq = "\u001b[F"),
+        StickyKey("DEL", false, instantSeq = "\u001b[3~")
+    )
+
+    private val colIdle = Color.parseColor("#0F1729")
+    private val colArmed = Color.parseColor("#1A3A1A")
+    private val colLocked = Color.parseColor("#3A1A1A")
+
+    private fun refreshStickyView(key: StickyKey) {
+        key.view?.setBackgroundColor(when (key.state) {
+            StickyState.IDLE -> colIdle; StickyState.ARMED -> colArmed; StickyState.LOCKED -> colLocked
+        })
+        key.view?.setTextColor(when (key.state) {
+            StickyState.IDLE -> Color.parseColor("#F8FAFC")
+            StickyState.ARMED -> Color.parseColor("#88FF88")
+            StickyState.LOCKED -> Color.parseColor("#FF8888")
+        })
+    }
 
     private fun setupExtraKeys() {
         val keysLayout = findViewById<LinearLayout>(R.id.extraKeys)
-        val keys = listOf("ESC" to "\u001b", "TAB" to "\t", "CTRL" to null,
-            "↑" to "\u001b[A", "↓" to "\u001b[B", "←" to "\u001b[D", "→" to "\u001b[C",
-            "|" to "|", "/" to "/", "-" to "-", "~" to "~")
-        var ctrlActive = false
-        keys.forEach { (label, value) ->
-            val btn = Button(this).apply {
-                text = label; textSize = 14f; setTextColor(Color.WHITE)
-                setBackgroundColor(0xFF2D2D2D.toInt()); setPadding(24, 12, 24, 12)
-                minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(3, 4, 3, 4) }
-            }
-            if (label == "CTRL") {
-                btn.setOnClickListener { ctrlActive = !ctrlActive; btn.setBackgroundColor(if (ctrlActive) 0xFF7C4DFF.toInt() else 0xFF2D2D2D.toInt()) }
-            } else {
-                btn.setOnClickListener {
-                    val s = tabs.firstOrNull { it.id == activeTabId }?.session ?: return@setOnClickListener
-                    if (ctrlActive && value != null && value.length == 1) {
-                        val code = value[0].code - 96; if (code in 1..26) s.write(byteArrayOf(code.toByte()), 0, 1)
-                        ctrlActive = false; keysLayout.getChildAt(2)?.setBackgroundColor(0xFF2D2D2D.toInt())
-                    } else if (value != null) s.write(value)
+        keysLayout.removeAllViews()
+        val dp = resources.displayMetrics.density
+
+        stickyKeys.forEach { key ->
+            val tv = android.widget.TextView(this).apply {
+                text = key.label; textSize = 12f
+                setTextColor(Color.parseColor("#F8FAFC"))
+                typeface = Typeface.MONOSPACE
+                gravity = android.view.Gravity.CENTER
+                setBackgroundColor(colIdle)
+                layoutParams = LinearLayout.LayoutParams(0, (40 * dp).toInt(), 1f).apply {
+                    marginEnd = (1 * dp).toInt()
+                }
+                if (key.isModifier) {
+                    setOnClickListener {
+                        key.state = when (key.state) {
+                            StickyState.IDLE -> StickyState.ARMED
+                            StickyState.ARMED -> StickyState.LOCKED
+                            StickyState.LOCKED -> StickyState.IDLE
+                        }
+                        refreshStickyView(key)
+                    }
+                } else {
+                    setOnClickListener {
+                        setBackgroundColor(Color.parseColor("#1E293B"))
+                        postDelayed({ setBackgroundColor(colIdle) }, 120)
+                        sendKey(key.instantSeq)
+                    }
                 }
             }
-            keysLayout.addView(btn)
+            key.view = tv
+            keysLayout.addView(tv)
+        }
+    }
+
+    private fun sendKey(data: String) {
+        val s = tabs.firstOrNull { it.id == activeTabId }?.session ?: return
+        val ctrl = stickyKeys.first { it.label == "CTRL" }
+        val alt = stickyKeys.first { it.label == "ALT" }
+        if (ctrl.state != StickyState.IDLE && data.length == 1) {
+            val code = data[0].lowercaseChar().code - 'a'.code + 1
+            if (code in 1..26) s.write(byteArrayOf(code.toByte()), 0, 1)
+            else s.write(data)
+            if (ctrl.state == StickyState.ARMED) { ctrl.state = StickyState.IDLE; refreshStickyView(ctrl) }
+            if (alt.state == StickyState.ARMED) { alt.state = StickyState.IDLE; refreshStickyView(alt) }
+        } else {
+            s.write(data)
         }
     }
 
     // ── TerminalViewClient ────────────────────────────────────────────────────
 
-    override fun onScale(scale: Float): Float { currentTextSize = (currentTextSize * scale).coerceIn(8f, 32f).toInt(); terminalView.setTextSize(currentTextSize); return scale }
+    override fun onScale(scale: Float): Float {
+        val dp = resources.displayMetrics.scaledDensity
+        if (currentTextSize == 0) currentTextSize = (14 * dp).toInt()
+        currentTextSize = (currentTextSize * scale).coerceIn(6 * dp, 36 * dp).toInt()
+        terminalView.setTextSize(currentTextSize)
+        return 1f
+    }
     override fun onSingleTapUp(e: MotionEvent) { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(terminalView, 0) }
     override fun shouldBackButtonBeMappedToEscape() = false
     override fun copyModeChanged(copyMode: Boolean) {}
