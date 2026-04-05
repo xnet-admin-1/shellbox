@@ -33,7 +33,7 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
 
     private lateinit var terminalView: TerminalView
     private lateinit var tabBar: LinearLayout
-    private var currentTextSize = 14
+    private var currentTextSize = 0f
 
     data class Tab(val id: Int, val shellId: String, val title: String, val session: TerminalSession)
 
@@ -61,7 +61,7 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
         tabBar = findViewById(R.id.tabBar)
 
         terminalView.setTerminalViewClient(this)
-        terminalView.setTextSize(currentTextSize)
+        terminalView.setTextSize((13 * resources.displayMetrics.scaledDensity).toInt())
         terminalView.setTypeface(Typeface.MONOSPACE)
 
         setupExtraKeys()
@@ -259,9 +259,9 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
 
     override fun onScale(scale: Float): Float {
         val dp = resources.displayMetrics.scaledDensity
-        if (currentTextSize == 0) currentTextSize = (14 * dp).toInt()
-        currentTextSize = (currentTextSize * scale).coerceIn(6 * dp, 36 * dp).toInt()
-        terminalView.setTextSize(currentTextSize)
+        if (currentTextSize == 0f) currentTextSize = terminalView.textSize.toFloat()
+        currentTextSize = (currentTextSize * scale).coerceIn(6 * dp, 36 * dp)
+        terminalView.setTextSize(currentTextSize.toInt())
         return 1f
     }
     override fun onSingleTapUp(e: MotionEvent) { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(terminalView, 0) }

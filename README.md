@@ -1,217 +1,135 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" />
-  <img src="https://img.shields.io/badge/MCP-Streamable%20HTTP-blue" />
-  <img src="https://img.shields.io/badge/Transport-0.0.0.0-orange" />
-  <img src="https://img.shields.io/badge/License-AGPL--3.0-purple" />
-</p>
+# 📦 ShellBox
 
-# 🐚 MCPShell
+A standalone terminal emulator for Android with real PTY, rootless Linux containers, and Shizuku elevation. Three shells in one app — no root required.
 
-**Turn any Android device into an MCP server.** MCPShell exposes Android shell environments, a full Ubuntu userland, and filesystem tools to any MCP-compatible AI client — all running locally on the device.
+## Shells
 
-Connect your AI chat app → it gets a real Linux terminal, package manager, and file access on your phone. No cloud. No root. No PC required.
+| Shell | UID | Description |
+|-------|-----|-------------|
+| **Android** | App | `/system/bin/sh` — always available |
+| **Ubuntu** | root (proot) | Full Ubuntu 24.04 via PRoot — apt, python, git, node, everything |
+| **Shizuku** | 2000 (shell) | ADB-level access — pm, am, settings, dumpsys, logcat |
 
----
+## Features
+
+- **Real PTY** — full terminal emulator with escape sequences, colors, cursor, resize (Termux terminal library)
+- **Tabs** — multiple concurrent sessions, long-press to close
+- **Sticky modifier keys** — CTRL/ALT with tri-state: tap once = single-shot (green), tap again = locked (red), tap again = off
+- **Extra keys** — ESC, TAB, CTRL, ALT, arrows, HOME, END, DEL
+- **Pinch to zoom** — smooth density-aware text scaling
+- **Ubuntu bootstrap** — downloads Box rootfs on first run (~17MB), patches for Android compatibility
+- **Shizuku integration** — auto-detects Shizuku, copies rish binary, elevated shell via `app_process`
+- **Background service** — foreground service with wakelock keeps sessions alive
 
 ## How It Works
 
-```
-┌─────────────────────┐         POST /mcp          ┌──────────────────────┐
-│   MCP Client App    │ ◄─────────────────────────► │     MCPShell         │
-│   (Kelivo, Claude,  │    JSON-RPC over HTTP       │                      │
-│    AIOPE, etc.)     │    0.0.0.0:39811            │  ┌─ sh (Android)     │
-└─────────────────────┘                             │  ├─ Ubuntu (proot)   │
-                                                    │  ├─ rish (Shizuku)   │
-                                                    │  └─ File tools       │
-                                                    └──────────────────────┘
-```
+### Ubuntu (PRoot)
 
-MCPShell runs a **Streamable HTTP** MCP server on `0.0.0.0:39811`. AI clients send JSON-RPC requests, MCPShell executes them and returns results. Simple request/response — no SSE, no WebSocket, no sessions.
-
----
-
-## 🛠 Tools
-
-### Shell Environments
-
-| Tool | Environment | What You Get |
-|------|-------------|-------------|
-| `run_sh` | Android sh | Native Android shell — fast, always available |
-| `run_ubuntu` | proot Ubuntu 24.04 | Full Linux userland — apt, python, gcc, git, curl, etc. |
-| `run_rish` | Shizuku shell | ADB-level permissions — install apps, manage system settings |
-
-### Filesystem
-
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents (text, with size limit) |
-| `write_file` | Create or overwrite files |
-| `list_directory` | List directory contents with metadata |
-| `search_files` | Recursive file search by name pattern |
-| `get_file_info` | File size, permissions, timestamps |
-
----
-
-## 🚀 Quick Start
-
-1. **Install** the APK on your Android device
-2. **Open** MCPShell → tap **Start**
-3. **Setup Ubuntu** (optional) → downloads ~17MB rootfs, extracts and patches
-4. **Connect** your MCP client to `http://<device-ip>:39811/mcp`
-
----
-
-## 📱 Client Configuration
-
-MCPShell uses **Streamable HTTP** transport. Point your MCP client at:
+ShellBox uses [Box](https://github.com/xnet-admin-1/box) native binaries to run a rootless Ubuntu 24.04 container via PRoot. No root, no kernel modules — PRoot uses `ptrace` to translate filesystem paths and fake root permissions.
 
 ```
-http://<device-ip>:39811/mcp
+TerminalSession (PTY) → libproot-xed.so → Ubuntu 24.04 rootfs
+                         ├── ptrace-based chroot
+                         ├── --link2symlink (Android hardlink workaround)
+                         ├── --sysvipc (System V IPC emulation)
+                         └── Mirrored networking (host stack shared)
 ```
 
-The server also accepts requests on `/message` and `/sse` for client compatibility.
+On first launch, ShellBox:
+1. Downloads Ubuntu 24.04 rootfs from Box GitHub releases
+2. Extracts with `libbsdtar.so` (handles Android hardlink limitations)
+3. Patches DNS, locale, permissions, dpkg stubs, Android GIDs
+4. Runs `dpkg --configure -a` for clean package state
 
-### Example: MCP Client Config
+### Shizuku (ADB Shell)
 
-```json
-{
-  "mcpServers": {
-    "mcpshell": {
-      "url": "http://192.168.0.66:39811/mcp"
-    }
-  }
-}
-```
+Uses the `rish` binary from Shizuku to spawn an interactive shell as UID 2000 (adb/shell user). This gives access to:
+- Package management (`pm install`, `pm uninstall`)
+- Activity management (`am start`, `am force-stop`)
+- System settings (`settings put`)
+- Debug tools (`dumpsys`, `logcat`, `cmd`)
 
-### Health Check
+ShellBox auto-copies `rish` + `rish_shizuku.dex` from Shizuku's storage directory and handles the Android 14+ `chmod 400` dex requirement.
 
-```
-GET http://<device-ip>:39811/health
-→ {"status":"ok","transport":"streamable-http","tools":8}
-```
-
----
-
-## 🐧 Ubuntu Environment
-
-The proot Ubuntu environment is a real Ubuntu 24.04 (arm64) userland running without root via [PRoot](https://proot-me.github.io/). On first setup, MCPShell:
-
-- Downloads the Ubuntu 24.04 rootfs (~17MB proot-distro repackaged)
-- Extracts via bsdtar (libarchive) — handles hardlinks gracefully on Android
-- Patches for proot compatibility (DNS, stubs, permissions, Android GIDs)
-- Configures agent-optimized defaults (silent apt, no prompts, timeouts)
-
-Once set up, your AI can:
-
-```bash
-apt update && apt install -y python3 git curl
-python3 -c "print('Hello from Android!')"
-git clone https://github.com/user/repo && cd repo && cat README.md
-```
-
-### Pre-configured Defaults
-
-- **apt/dpkg**: Silent mode, no recommends, no interactive prompts, auto-retries
-- **Shell**: Minimal prompt, no history, `DEBIAN_FRONTEND=noninteractive`
-- **Network tools**: wget/curl with 30s timeouts and retries
-- **Dev tools**: git with no pager, pip with no progress bars
-
----
-
-## 🏗 Native Binary Pipeline
-
-MCPShell ships 5 cross-compiled native binaries in `jniLibs/arm64-v8a/`:
-
-| Binary | Source | Role |
-|--------|--------|------|
-| `libproot-xed.so` | Termux-patched PRoot | The proot binary — ptrace-based syscall translation |
-| `libproot.so` | Termux PRoot loader | W^X bypass loader for Android ≥10 |
-| `libproot32.so` | Termux PRoot loader | 32-bit loader |
-| `libtalloc.so` | talloc | PRoot dependency — hierarchical memory allocator |
-| `libbsdtar.so` | libarchive | PRoot dependency — archive extraction (also used for rootfs setup) |
-
-PRoot's two dependencies are talloc and libarchive. All binaries are cross-compiled for `aarch64-linux-android` using the Android NDK toolchain.
-
-The rootfs is downloaded from [Box](https://github.com/xnet-admin-1/box) releases — a Canonical ubuntu-base cloud image repackaged as tar.xz for proot compatibility (hardlink dereference, per-arch builds, sha256 checksums).
-
----
-
-## 📐 Architecture
+## Architecture
 
 ```
-com.mcpshell/
-├── MainActivity.kt              # UI: start/stop, setup ubuntu, self-test, logs
-├── McpShellApp.kt               # Application singleton
-├── server/
-│   └── McpSseServer.kt          # Raw ServerSocket on 0.0.0.0, Streamable HTTP, JSON-RPC
+com.shellbox/
+├── MainActivity.kt              # Terminal UI, tabs, sticky keys, shell picker
+├── ShellBoxApp.kt               # Application + Shizuku binder listener
+├── service/
+│   └── ShellBoxService.kt       # Foreground service + wakelock
 ├── shell/
-│   ├── ShellExecutor.kt         # Android sh via Runtime.exec()
-│   ├── ProotExecutor.kt         # proot Ubuntu (arm64 native binary)
-│   ├── ProotBootstrap.kt        # Ubuntu rootfs download + bsdtar extraction + patching
-│   └── RishExecutor.kt          # Shizuku elevated shell
-├── tools/
-│   ├── ToolRegistry.kt          # Tool dispatch + JSON schema
-│   ├── ShellTools.kt            # run_sh, run_ubuntu, run_rish
-│   └── FileTools.kt             # read_file, write_file, list_directory, etc.
-└── service/
-    └── McpForegroundService.kt  # Keeps server alive in background
+│   ├── ProotBootstrap.kt        # Rootfs download, extraction, patching
+│   ├── ProotExecutor.kt         # One-shot proot command execution
+│   ├── RishExecutor.kt          # Shizuku API shell execution
+│   └── ShellExecutor.kt         # Android sh execution
+└── terminal/
+    ├── ShellDiscovery.kt         # Shell backend detection (sh/ubuntu/rish)
+    ├── RishTerminalSession.kt    # Shizuku PTY session (UID 2000)
+    ├── backend/                  # Terminal emulator (NeoTerm/Termux fork)
+    │   ├── TerminalSession.java  # PTY session management (non-final for subclassing)
+    │   ├── TerminalEmulator.java # VT100/xterm state machine
+    │   └── JNI.java              # Native bridge to libtermux.so (forkpty)
+    └── view/
+        ├── TerminalView.java     # Terminal rendering widget
+        └── TerminalViewClient.java
 ```
 
-### Key Design Decisions
+## Native Binaries
 
-- **Raw ServerSocket** instead of NanoHTTPD — NanoHTTPD's chunked encoding broke client parsing
-- **Streamable HTTP** instead of SSE — simpler, more reliable, no session management
-- **0.0.0.0 bind** — accessible from other devices on the network for dev/testing
-- **bsdtar (libarchive)** for rootfs extraction — handles all archive formats, gracefully works around Android's hardlink limitation
-- **Native proot binaries** bundled as `.so` in jniLibs — executed from nativeLibraryDir (exec-allowed mount)
-- **Rootfs from proot-distro** — custom repackaged Ubuntu cloud image with proot-specific patches
+Bundled in `jniLibs/arm64-v8a/`, cross-compiled from [Box](https://github.com/xnet-admin-1/box):
 
----
+| Binary | Source | Purpose |
+|--------|--------|---------|
+| `libproot-xed.so` | Termux PRoot | The proot binary |
+| `libproot.so` | PRoot loader | W^X bypass (64-bit) |
+| `libproot32.so` | PRoot loader | W^X bypass (32-bit) |
+| `libtalloc.so` | talloc 2.4.4 | PRoot dependency |
+| `libbsdtar.so` | libarchive 3.8.6 | Rootfs extraction (with liblzma) |
 
-## 🏗 Building from Source
-
-```bash
-git clone https://github.com/xnet-mobile/mcpshell.git
-cd mcpshell
-./build.sh            # builds via Docker (xnet-dev container)
-./build.sh --install  # build + adb install
-```
-
-Or directly with Gradle:
+## Build
 
 ```bash
+# In xnet-dev container (or any env with Android SDK + JDK 17):
+cd shellbox
 ./gradlew :app:assembleDebug
-```
 
-APK output: `app/build/outputs/apk/debug/app-debug.apk`
+# APK at: app/build/outputs/apk/debug/app-debug.apk
+```
 
 ### Requirements
 
-- Android SDK (API 26+, target 34)
+- Android SDK 34, NDK not required (native binaries pre-built)
 - JDK 17
-- Gradle 8.4+
+- Gradle 8.4
 
----
+## Install
 
-## ⚠️ Security
+```bash
+adb install shellbox-debug.apk
+```
 
-MCPShell binds to `0.0.0.0` — it is accessible from the local network. Restrict access at the network level if needed.
+For Shizuku shell: install [Shizuku](https://shizuku.rikka.app/) and start it via ADB or wireless debugging.
 
-`run_sh` and `run_ubuntu` execute arbitrary commands as the app user. `run_rish` executes with ADB-level permissions via Shizuku. Use responsibly.
+## Dependencies
 
----
+| Library | Version | Purpose |
+|---------|---------|---------|
+| Termux terminal-emulator | v0.118.0 | Native PTY (libtermux.so) |
+| Shizuku API | 13.1.5 | Elevated shell access |
+| AndroidX AppCompat | 1.6.1 | UI compatibility |
+| Material Components | 1.11.0 | Theme |
 
-## 📋 Requirements
+Terminal backend is a local fork of Termux/NeoTerm with `TerminalSession` made non-final to support `RishTerminalSession` subclassing.
 
-| Requirement | Status |
-|-------------|--------|
-| Android 8.0+ (API 26) | Required |
-| ~50MB storage (Ubuntu rootfs) | For `run_ubuntu` |
-| [Shizuku](https://shizuku.rikka.app/) | For `run_rish` (optional) |
-| Internet (first setup only) | To download Ubuntu rootfs |
+## Related Projects
 
----
+| Project | Description |
+|---------|-------------|
+| [Box](https://github.com/xnet-admin-1/box) | Rootless container runtime — provides native binaries and rootfs |
+| [MCPShell](https://github.com/xnet-admin-1/mcpshell) | MCP server for Android — shares ProotBootstrap code |
 
 ## License
 
-[AGPL-3.0](LICENSE)
+GPL-2.0 (PRoot), various for dependencies.
