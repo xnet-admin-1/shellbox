@@ -58,22 +58,63 @@ object ShellDiscovery {
             ))
         }
 
-        // 3. Shizuku rish — always show, request permission on tap
+        // 3. Shizuku rish — use rish binary for elevated shell
         val shizukuAvailable = try { rikka.shizuku.Shizuku.pingBinder() } catch (_: Exception) { false }
         if (shizukuAvailable) {
-            val hasPermission = RishExecutor.isShizukuReady()
+            val rishReady = setupRish(ctx)
+            val binDir = File(ctx.filesDir, "bin")
             shells.add(Shell(
                 id = "rish",
-                name = if (hasPermission) "Shizuku Shell (ADB)" else "Shizuku (tap to grant)",
-                command = "/system/bin/sh", args = arrayOf(),
-                env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp"),
+                name = if (rishReady) "Shizuku Shell (ADB)" else "Shizuku (tap to grant)",
+                command = if (rishReady) File(binDir, "rish").absolutePath else "",
+                args = if (rishReady) arrayOf() else arrayOf(),
+                env = if (rishReady) arrayOf(
+                    "TERM=xterm-256color",
+                    "RISH_APPLICATION_ID=com.shellbox",
+                    "RISH_DEX=${File(binDir, "rish_shizuku.dex").absolutePath}"
+                ) else arrayOf(),
                 cwd = "/data/local/tmp",
-                available = hasPermission,
-                needsSetup = !hasPermission
+                available = rishReady,
+                needsSetup = !rishReady
             ))
         }
 
         return shells
+    }
+
+    /**
+     * Copy rish + dex from Shizuku's storage to our private dir.
+     * Dex must be chmod 400 on Android 14+.
+     */
+    private fun setupRish(ctx: Context): Boolean {
+        val binDir = File(ctx.filesDir, "bin")
+        binDir.mkdirs()
+        val privateRish = File(binDir, "rish")
+        val privateDex = File(binDir, "rish_shizuku.dex")
+
+        val storagePaths = listOf(
+            "/storage/emulated/0/shizuku/rish",
+            "/sdcard/shizuku/rish"
+        )
+        for (src in storagePaths) {
+            val srcFile = File(src)
+            val srcDex = File(File(src).parent, "rish_shizuku.dex")
+            if (srcFile.isFile && srcDex.isFile) {
+                try {
+                    // Remove old files
+                    listOf(privateRish, privateDex).forEach { f ->
+                        try { f.setWritable(true); f.delete() } catch (_: Exception) {}
+                    }
+                    srcFile.inputStream().use { i -> privateRish.outputStream().use { o -> i.copyTo(o) } }
+                    srcDex.inputStream().use { i -> privateDex.outputStream().use { o -> i.copyTo(o) } }
+                    privateRish.setExecutable(true)
+                    privateDex.setReadable(true)
+                    privateDex.setWritable(false) // chmod 400 for Android 14+
+                    return true
+                } catch (_: Exception) {}
+            }
+        }
+        return privateRish.isFile && privateDex.isFile
     }
 
     private fun buildProotArgs(rootfs: String, filesDir: String): Array<String> {
