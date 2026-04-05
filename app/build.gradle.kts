@@ -40,8 +40,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    // Termux terminal
-    implementation("com.github.termux.termux-app:terminal-view:v0.118.0")
+    // Termux terminal — emulator for native JNI (forkpty), view is local copy
     implementation("com.github.termux.termux-app:terminal-emulator:v0.118.0")
     // Shizuku
     implementation("dev.rikka.shizuku:api:13.1.5")

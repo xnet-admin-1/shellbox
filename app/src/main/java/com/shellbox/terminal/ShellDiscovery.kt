@@ -60,16 +60,20 @@ object ShellDiscovery {
 
         // 3. Shizuku rish — use rish binary for elevated shell
         val shizukuAvailable = try { rikka.shizuku.Shizuku.pingBinder() } catch (_: Exception) { false }
+        android.util.Log.i("ShellDiscovery", "Shizuku ping=$shizukuAvailable")
         if (shizukuAvailable) {
             val rishReady = setupRish(ctx)
+            android.util.Log.i("ShellDiscovery", "rish ready=$rishReady")
             val binDir = File(ctx.filesDir, "bin")
             shells.add(Shell(
                 id = "rish",
                 name = if (rishReady) "Shizuku Shell (ADB)" else "Shizuku (tap to grant)",
-                command = if (rishReady) File(binDir, "rish").absolutePath else "",
-                args = if (rishReady) arrayOf() else arrayOf(),
+                command = if (rishReady) "/system/bin/sh" else "",
+                args = if (rishReady) arrayOf("/system/bin/sh", "-c", "exec /system/bin/sh ${File(binDir, "rish").absolutePath}") else arrayOf(),
                 env = if (rishReady) arrayOf(
                     "TERM=xterm-256color",
+                    "HOME=/data/local/tmp",
+                    "PATH=/system/bin:/system/xbin",
                     "RISH_APPLICATION_ID=com.shellbox",
                     "RISH_DEX=${File(binDir, "rish_shizuku.dex").absolutePath}"
                 ) else arrayOf(),

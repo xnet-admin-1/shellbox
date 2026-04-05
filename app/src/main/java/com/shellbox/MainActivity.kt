@@ -13,7 +13,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -22,15 +21,15 @@ import androidx.core.app.ActivityCompat
 import com.shellbox.service.ShellBoxService
 import com.shellbox.shell.ProotBootstrap
 import com.shellbox.shell.RishExecutor
+import com.shellbox.terminal.RishTerminalSession
 import com.shellbox.terminal.ShellDiscovery
-import com.termux.terminal.TerminalSession
-import com.termux.terminal.TerminalSessionClient
-import com.termux.view.TerminalView
-import com.termux.view.TerminalViewClient
+import com.shellbox.terminal.backend.TerminalSession
+import com.shellbox.terminal.view.TerminalView
+import com.shellbox.terminal.view.TerminalViewClient
 
 private const val TAG = "ShellBox"
 
-class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionClient {
+class MainActivity : AppCompatActivity(), TerminalViewClient {
 
     private lateinit var terminalView: TerminalView
     private lateinit var tabBar: LinearLayout
@@ -42,6 +41,18 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
     private var activeTabId = -1
     private var tabCounter = 0
 
+    private val sessionCallback = object : TerminalSession.SessionChangedCallback {
+        override fun onTextChanged(session: TerminalSession) { terminalView.onScreenUpdated() }
+        override fun onTitleChanged(session: TerminalSession) { runOnUiThread { updateTabBar() } }
+        override fun onSessionFinished(session: TerminalSession) { removeTabBySession(session) }
+        override fun onClipboardText(session: TerminalSession, text: String) {
+            val clip = getSystemService(android.content.ClipboardManager::class.java)
+            clip.setPrimaryClip(android.content.ClipData.newPlainText("ShellBox", text))
+        }
+        override fun onBell(session: TerminalSession) {}
+        override fun onColorsChanged(session: TerminalSession) {}
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -50,7 +61,7 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         tabBar = findViewById(R.id.tabBar)
 
         terminalView.setTerminalViewClient(this)
-        terminalView.setTextSize(14)
+        terminalView.setTextSize(currentTextSize)
         terminalView.setTypeface(Typeface.MONOSPACE)
 
         setupExtraKeys()
@@ -60,13 +71,11 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
 
-        // Ensure home/tmp dirs exist
         java.io.File(filesDir, "home").mkdirs()
         java.io.File(filesDir, "tmp").mkdirs()
-
         ProotBootstrap.ensurePatched(this) {}
-        openShell("sh")
 
+        openShell("sh")
         findViewById<Button>(R.id.btnNewTab).setOnClickListener { showShellPicker() }
     }
 
@@ -74,40 +83,19 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         val shells = ShellDiscovery.getShells(this)
         val shell = shells.firstOrNull { it.id == shellId } ?: shells.first()
 
-        if (shell.id == "rish") {
-            openRishShell(); return
+        val session: TerminalSession = if (shell.id == "rish" && shell.available) {
+            // Use RishTerminalSession for elevated Shizuku shell
+            val dexPath = shell.env.firstOrNull { it.startsWith("RISH_DEX=") }?.substringAfter("=") ?: ""
+            val envMap = shell.env.associate { val parts = it.split("=", limit = 2); parts[0] to parts.getOrElse(1) { "" } }
+            RishTerminalSession(dexPath, envMap, sessionCallback)
+        } else {
+            TerminalSession(shell.command, "/", shell.args, shell.env, sessionCallback)
         }
 
-        val session = TerminalSession(shell.command, "/", shell.args, shell.env, 4000, this)
         val tabId = tabCounter++
         tabs.add(Tab(tabId, shell.id, shell.name, session))
         switchToTab(tabId)
         updateTabBar()
-    }
-
-    private fun openRishShell() {
-        // For Shizuku, we use a regular TerminalSession with /system/bin/sh
-        // but the session runs at app level. To get true elevation, we'd need
-        // to override TerminalSession's process creation (like AIOPE's RishTerminalSession).
-        // For now, use the regular sh session and exec commands via Shizuku's newProcess.
-        // TODO: Port AIOPE's RishTerminalSession for true elevated PTY
-        Toast.makeText(this, "Shizuku shell: use 'id' to verify elevation", Toast.LENGTH_SHORT).show()
-
-        try {
-            // Create a script that uses Shizuku for elevation
-            val session = TerminalSession(
-                "/system/bin/sh", "/data/local/tmp",
-                arrayOf(), arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp"),
-                4000, this
-            )
-            val tabId = tabCounter++
-            tabs.add(Tab(tabId, "rish", "Shizuku (ADB)", session))
-            switchToTab(tabId)
-            updateTabBar()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Shizuku error: ${e.message}", Toast.LENGTH_LONG).show()
-            Log.e(TAG, "Shizuku shell failed", e)
-        }
     }
 
     private fun switchToTab(tabId: Int) {
@@ -205,52 +193,18 @@ class MainActivity : AppCompatActivity(), TerminalViewClient, TerminalSessionCli
         }
     }
 
-    // ── TerminalSessionClient ─────────────────────────────────────────────────
-
-    override fun onTextChanged(session: TerminalSession) { terminalView.onScreenUpdated() }
-    override fun onTitleChanged(session: TerminalSession) { runOnUiThread { updateTabBar() } }
-    override fun onSessionFinished(session: TerminalSession) { removeTabBySession(session) }
-    override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
-        val clip = getSystemService(android.content.ClipboardManager::class.java)
-        clip.setPrimaryClip(android.content.ClipData.newPlainText("ShellBox", text))
-    }
-    override fun onPasteTextFromClipboard(session: TerminalSession) {
-        val clip = getSystemService(android.content.ClipboardManager::class.java)
-        clip.primaryClip?.getItemAt(0)?.text?.let { session.write(it.toString()) }
-    }
-    override fun onBell(session: TerminalSession) {}
-    override fun onColorsChanged(session: TerminalSession) {}
-    override fun onTerminalCursorStateChange(state: Boolean) {}
-    override fun getTerminalCursorStyle(): Int = 0
-
     // ── TerminalViewClient ────────────────────────────────────────────────────
 
     override fun onScale(scale: Float): Float { currentTextSize = (currentTextSize * scale).coerceIn(8f, 32f).toInt(); terminalView.setTextSize(currentTextSize); return scale }
     override fun onSingleTapUp(e: MotionEvent) { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(terminalView, 0) }
     override fun shouldBackButtonBeMappedToEscape() = false
-    override fun shouldEnforceCharBasedInput() = true
-    override fun shouldUseCtrlSpaceWorkaround() = false
-    override fun isTerminalViewSelected() = true
     override fun copyModeChanged(copyMode: Boolean) {}
     override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession) = false
     override fun onKeyUp(keyCode: Int, e: KeyEvent) = false
     override fun onLongPress(event: MotionEvent) = false
     override fun readControlKey() = false
     override fun readAltKey() = false
-    override fun readShiftKey() = false
-    override fun readFnKey() = false
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession) = false
-    override fun onEmulatorSet() {}
-
-    // ── Logging (required by both interfaces) ─────────────────────────────────
-
-    override fun logError(tag: String, msg: String) { Log.e(tag, msg) }
-    override fun logWarn(tag: String, msg: String) { Log.w(tag, msg) }
-    override fun logInfo(tag: String, msg: String) { Log.i(tag, msg) }
-    override fun logDebug(tag: String, msg: String) { Log.d(tag, msg) }
-    override fun logVerbose(tag: String, msg: String) { Log.v(tag, msg) }
-    override fun logStackTraceWithMessage(tag: String, msg: String, e: Exception) { Log.e(tag, msg, e) }
-    override fun logStackTrace(tag: String, e: Exception) { Log.e(tag, "Stack trace", e) }
 
     // ── Permissions ───────────────────────────────────────────────────────────
 
