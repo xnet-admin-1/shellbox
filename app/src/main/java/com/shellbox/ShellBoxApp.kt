@@ -11,11 +11,7 @@ class ShellBoxApp : Application() {
         super.onCreate()
         instance = this
         Log.i("ShellBox", "Application started")
-        rikka.shizuku.Shizuku.addBinderReceivedListenerSticky {
-            Log.i("ShellBox", "Shizuku binder received")
-            if (rikka.shizuku.Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                try { rikka.shizuku.Shizuku.requestPermission(0) } catch (_: Exception) {}
-            }
-        }
+        // Elevated shell is provided by the bundled xnix-shelld daemon; no
+        // Shizuku binder/permission handshake is required.
     }
 }

@@ -13,7 +13,13 @@ android {
         targetSdk = 34
         versionCode = 2
         versionName = "0.2.0"
-        ndk { abiFilters += "arm64-v8a" }
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86") }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     packaging {
@@ -42,7 +48,4 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     // Termux terminal — emulator for native JNI (forkpty), view is local copy
     implementation("com.github.termux.termux-app:terminal-emulator:v0.118.0")
-    // Shizuku
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

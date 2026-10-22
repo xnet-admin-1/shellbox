@@ -58,67 +58,24 @@ object ShellDiscovery {
             ))
         }
 
-        // 3. Shizuku rish — use rish binary for elevated shell
-        val shizukuAvailable = try { rikka.shizuku.Shizuku.pingBinder() } catch (_: Exception) { false }
-        android.util.Log.i("ShellDiscovery", "Shizuku ping=$shizukuAvailable")
-        if (shizukuAvailable) {
-            val rishReady = setupRish(ctx)
-            android.util.Log.i("ShellDiscovery", "rish ready=$rishReady")
-            val binDir = File(ctx.filesDir, "bin")
-            shells.add(Shell(
-                id = "rish",
-                name = if (rishReady) "Shizuku Shell (ADB)" else "Shizuku (tap to grant)",
-                command = if (rishReady) "/system/bin/sh" else "",
-                args = if (rishReady) arrayOf("/system/bin/sh", "-c", "exec /system/bin/sh ${File(binDir, "rish").absolutePath}") else arrayOf(),
-                env = if (rishReady) arrayOf(
-                    "TERM=xterm-256color",
-                    "HOME=/data/local/tmp",
-                    "PATH=/system/bin:/system/xbin",
-                    "RISH_APPLICATION_ID=com.shellbox",
-                    "RISH_DEX=${File(binDir, "rish_shizuku.dex").absolutePath}"
-                ) else arrayOf(),
-                cwd = "/data/local/tmp",
-                available = rishReady,
-                needsSetup = !rishReady
-            ))
-        }
+        // 3. X-NIX elevated shell — served by the bundled xnix-shelld daemon
+        //    (uid 2000). Always available; no Shizuku/permission handshake.
+        shells.add(Shell(
+            id = "rish",
+            name = "X-NIX Shell (uid=2000)",
+            command = "/system/bin/sh",
+            args = arrayOf("/system/bin/sh"),
+            env = arrayOf(
+                "TERM=xterm-256color",
+                "HOME=/data/local/tmp",
+                "PATH=/system/bin:/system/xbin"
+            ),
+            cwd = "/data/local/tmp",
+            available = true,
+            needsSetup = false
+        ))
 
         return shells
-    }
-
-    /**
-     * Copy rish + dex from Shizuku's storage to our private dir.
-     * Dex must be chmod 400 on Android 14+.
-     */
-    private fun setupRish(ctx: Context): Boolean {
-        val binDir = File(ctx.filesDir, "bin")
-        binDir.mkdirs()
-        val privateRish = File(binDir, "rish")
-        val privateDex = File(binDir, "rish_shizuku.dex")
-
-        val storagePaths = listOf(
-            "/storage/emulated/0/shizuku/rish",
-            "/sdcard/shizuku/rish"
-        )
-        for (src in storagePaths) {
-            val srcFile = File(src)
-            val srcDex = File(File(src).parent, "rish_shizuku.dex")
-            if (srcFile.isFile && srcDex.isFile) {
-                try {
-                    // Remove old files
-                    listOf(privateRish, privateDex).forEach { f ->
-                        try { f.setWritable(true); f.delete() } catch (_: Exception) {}
-                    }
-                    srcFile.inputStream().use { i -> privateRish.outputStream().use { o -> i.copyTo(o) } }
-                    srcDex.inputStream().use { i -> privateDex.outputStream().use { o -> i.copyTo(o) } }
-                    privateRish.setExecutable(true)
-                    privateDex.setReadable(true)
-                    privateDex.setWritable(false) // chmod 400 for Android 14+
-                    return true
-                } catch (_: Exception) {}
-            }
-        }
-        return privateRish.isFile && privateDex.isFile
     }
 
     private fun buildProotArgs(rootfs: String, filesDir: String): Array<String> {

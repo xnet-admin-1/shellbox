@@ -84,7 +84,7 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
         val shell = shells.firstOrNull { it.id == shellId } ?: shells.first()
 
         val session: TerminalSession = if (shell.id == "rish" && shell.available) {
-            // Use RishTerminalSession for elevated Shizuku shell
+            // Use RishTerminalSession for the elevated X-NIX shell (uid 2000)
             val dexPath = shell.env.firstOrNull { it.startsWith("RISH_DEX=") }?.substringAfter("=") ?: ""
             val envMap = shell.env.associate { val parts = it.split("=", limit = 2); parts[0] to parts.getOrElse(1) { "" } }
             RishTerminalSession(dexPath, envMap, sessionCallback)
@@ -139,14 +139,6 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
             val shell = shells[i]
             when {
                 shell.id == "ubuntu" && shell.needsSetup -> setupUbuntu()
-                shell.id == "rish" && shell.needsSetup -> {
-                    try {
-                        rikka.shizuku.Shizuku.requestPermission(0)
-                        Toast.makeText(this, "Grant Shizuku permission, then try again", Toast.LENGTH_LONG).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(this, "Shizuku error: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
                 shell.available -> openShell(shell.id)
             }
         }.show()
