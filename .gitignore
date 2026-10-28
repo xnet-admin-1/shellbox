@@ -3,3 +3,4 @@ build/
 .gradle/
 *.apk
 local.properties
+*.pre-optA.bak
