@@ -17,6 +17,8 @@
     <application
         android:name=".ShellBoxApp"
         android:label="ShellBox"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:extractNativeLibs="true"
         android:theme="@style/Theme.ShellBox"
         android:exported="true">
