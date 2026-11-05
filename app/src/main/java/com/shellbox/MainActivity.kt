@@ -20,8 +20,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.shellbox.service.ShellBoxService
 import com.shellbox.shell.ProotBootstrap
-import com.shellbox.shell.RishExecutor
-import com.shellbox.terminal.RishTerminalSession
+import com.shellbox.terminal.ShelldTerminalSession
 import com.shellbox.terminal.ShellDiscovery
 import com.shellbox.terminal.backend.TerminalSession
 import com.shellbox.terminal.view.TerminalView
@@ -83,11 +82,15 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
         val shells = ShellDiscovery.getShells(this)
         val shell = shells.firstOrNull { it.id == shellId } ?: shells.first()
 
-        val session: TerminalSession = if (shell.id == "rish" && shell.available) {
-            // Use RishTerminalSession for the elevated X-NIX shell (uid 2000)
-            val dexPath = shell.env.firstOrNull { it.startsWith("RISH_DEX=") }?.substringAfter("=") ?: ""
+        val session: TerminalSession = if (shell.id == "sh") {
+            // Android Shell runs as UID 2000 via xnix-shelld
             val envMap = shell.env.associate { val parts = it.split("=", limit = 2); parts[0] to parts.getOrElse(1) { "" } }
-            RishTerminalSession(dexPath, envMap, sessionCallback)
+            try {
+                ShelldTerminalSession(envMap, sessionCallback)
+            } catch (e: Exception) {
+                Log.w(TAG, "Falling back to local shell session: ${e.message}")
+                TerminalSession(shell.command, "/", shell.args, shell.env, sessionCallback)
+            }
         } else {
             TerminalSession(shell.command, "/", shell.args, shell.env, sessionCallback)
         }

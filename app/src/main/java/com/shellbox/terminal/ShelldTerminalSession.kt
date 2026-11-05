@@ -15,22 +15,25 @@ import java.io.IOException
  * The daemon spawns `sh` as a session leader on a PTY slave and hands us the
  * master fd via SCM_RIGHTS. Because it is a real PTY, the shell performs its
  * own echo and line editing, so we simply pipe bytes in both directions.
- *
- * The constructor signature and public methods are preserved so MainActivity
- * and ShellDiscovery keep compiling.
  */
-class RishTerminalSession(
-    private val dexPath: String,
-    private val rishEnv: Map<String, String>,
+class ShelldTerminalSession(
+    private val shellEnv: Map<String, String>,
     changeCallback: SessionChangedCallback
 ) : TerminalSession(
     "/system/bin/sh", "/data/local/tmp",
     arrayOf("/system/bin/sh"),
-    rishEnv.map { (k, v) -> "$k=$v" }.toTypedArray(),
+    shellEnv.map { (k, v) -> "$k=$v" }.toTypedArray(),
     changeCallback
 ) {
+    // Backwards-compatible secondary constructor for any legacy callers
+    constructor(
+        dexPath: String,
+        legacyEnv: Map<String, String>,
+        changeCallback: SessionChangedCallback
+    ) : this(legacyEnv, changeCallback)
+
     companion object {
-        private const val TAG = "RishSession"
+        private const val TAG = "ShelldSession"
         private const val ESC = "\u001b"
         private val BANNER = "\r\n${ESC}[1;32m[X-NIX shell - uid=2000]${ESC}[0m\r\n"
         private val EXITED = "\r\n${ESC}[33m[X-NIX shell exited]${ESC}[0m\r\n"
@@ -52,6 +55,7 @@ class RishTerminalSession(
         try {
             val fd = ShelldClient.openPty(null)
             if (fd < 0) {
+                Log.w(TAG, "xnix-shelld openPty failed ($fd)")
                 val msg = "\r\nxnix-shelld error: openPty failed (errno ${-fd})\r\n"
                 val b = msg.toByteArray()
                 feedToEmulator(b, 0, b.size)
@@ -60,6 +64,7 @@ class RishTerminalSession(
             }
 
             ptyFd = fd
+            setTerminalFileDescriptor(fd)
             val parcel = ParcelFileDescriptor.adoptFd(fd)
             pfd = parcel
             ptyOut = FileOutputStream(parcel.fileDescriptor)
@@ -115,3 +120,5 @@ class RishTerminalSession(
         // SIGKILL; the daemon owns the remote shell process.
     }
 }
+
+typealias RishTerminalSession = ShelldTerminalSession

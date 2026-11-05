@@ -180,9 +180,13 @@ public class TerminalSession extends TerminalOutput {
    * @param columns The number of columns in the terminal window.
    * @param rows    The number of rows in the terminal window.
    */
-  /** Create emulator only — no subprocess. Used by RishTerminalSession. */
+  /** Create emulator only — no subprocess. Used by RishTerminalSession/ShelldTerminalSession. */
   protected void initializeEmulatorOnly(int columns, int rows) {
     mEmulator = new TerminalEmulator(this, columns, rows, /* transcript= */2000);
+  }
+
+  public void setTerminalFileDescriptor(int fd) {
+    this.mTerminalFileDescriptor = fd;
   }
 
   public void initializeEmulator(int columns, int rows) {

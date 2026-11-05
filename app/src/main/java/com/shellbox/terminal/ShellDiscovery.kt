@@ -2,7 +2,6 @@ package com.shellbox.terminal
 
 import android.content.Context
 import com.shellbox.shell.ProotBootstrap
-import com.shellbox.shell.RishExecutor
 import java.io.File
 
 object ShellDiscovery {
@@ -27,9 +26,9 @@ object ShellDiscovery {
         File(filesDir, "home").mkdirs()
         File(filesDir, "tmp").mkdirs()
 
-        // 1. Android sh
+        // 1. Android Shell (sh / bash) — UID 2000 via xnix-shelld
         shells.add(Shell(
-            id = "sh", name = "Android Shell",
+            id = "sh", name = "Shell (uid=2000)",
             command = "/system/bin/sh", args = arrayOf(),
             env = arrayOf("TERM=xterm-256color", "HOME=/data/local/tmp", "TMPDIR=$filesDir/tmp",
                 "PATH=/system/bin:/system/xbin"),
@@ -57,23 +56,6 @@ object ShellDiscovery {
                 available = false, needsSetup = true
             ))
         }
-
-        // 3. X-NIX elevated shell — served by the bundled xnix-shelld daemon
-        //    (uid 2000). Always available; no Shizuku/permission handshake.
-        shells.add(Shell(
-            id = "rish",
-            name = "X-NIX Shell (uid=2000)",
-            command = "/system/bin/sh",
-            args = arrayOf("/system/bin/sh"),
-            env = arrayOf(
-                "TERM=xterm-256color",
-                "HOME=/data/local/tmp",
-                "PATH=/system/bin:/system/xbin"
-            ),
-            cwd = "/data/local/tmp",
-            available = true,
-            needsSetup = false
-        ))
 
         return shells
     }
