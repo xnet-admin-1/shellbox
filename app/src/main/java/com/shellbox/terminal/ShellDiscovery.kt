@@ -20,7 +20,6 @@ object ShellDiscovery {
     fun getShells(ctx: Context): List<Shell> {
         val shells = mutableListOf<Shell>()
         val filesDir = ctx.filesDir.absolutePath
-        val nativeDir = ctx.applicationInfo.nativeLibraryDir
 
         // Ensure dirs exist
         File(filesDir, "home").mkdirs()
@@ -35,18 +34,14 @@ object ShellDiscovery {
             cwd = "/data/local/tmp"
         ))
 
-        // 2. Ubuntu proot — always show, mark if needs setup
+        // 2. Ubuntu proot — UID 2000 via xnix-shelld
         val ubuntuInstalled = ProotBootstrap.isInstalled(ctx)
-        val prootBin = ProotBootstrap.findProotXed(ctx)
-        if (prootBin != null && ubuntuInstalled) {
-            val rootfs = ProotBootstrap.rootfsDir(ctx).absolutePath
-            // Ensure /root exists in rootfs
-            java.io.File(rootfs, "root").mkdirs()
+        if (ubuntuInstalled) {
             shells.add(Shell(
                 id = "ubuntu", name = "Ubuntu (proot)",
-                command = prootBin.absolutePath,
-                args = buildProotArgs(rootfs, filesDir),
-                env = buildProotEnv(filesDir, nativeDir),
+                command = buildProotCommandLine(ctx),
+                args = arrayOf(),
+                env = arrayOf("TERM=xterm-256color", "HOME=/root", "USER=root", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"),
                 cwd = "/root"
             ))
         } else {
@@ -60,7 +55,55 @@ object ShellDiscovery {
         return shells
     }
 
-    private fun buildProotArgs(rootfs: String, filesDir: String): Array<String> {
+    /**
+     * Builds the full proot command string to be executed inside UID 2000 (via xnix-shelld).
+     */
+    fun buildProotCommandLine(ctx: Context? = null): String {
+        val nativeDir = ctx?.applicationInfo?.nativeLibraryDir ?: "/product/app/ShellBox/lib/arm64"
+        val proot = when {
+            File("/product/bin/proot").canExecute() -> "/product/bin/proot"
+            File("/data/local/tmp/proot").canExecute() -> "/data/local/tmp/proot"
+            File(nativeDir, "libproot-xed.so").exists() -> File(nativeDir, "libproot-xed.so").absolutePath
+            else -> "/data/local/tmp/proot"
+        }
+        val loader = when {
+            File("/product/lib64/libproot.so").exists() -> "/product/lib64/libproot.so"
+            File(nativeDir, "libproot.so").exists() -> File(nativeDir, "libproot.so").absolutePath
+            else -> ""
+        }
+        val rootfs = ProotBootstrap.rootfsPath(ctx)
+
+        val bindArgs = mutableListOf(
+            "-b", "/dev",
+            "-b", "/dev/urandom:/dev/random",
+            "-b", "/proc",
+            "-b", "/sys",
+            "-b", "/proc/self/fd:/dev/fd",
+            "-b", "$rootfs/tmp:/dev/shm",
+            "-b", "/proc/self/fd/0:/dev/stdin",
+            "-b", "/proc/self/fd/1:/dev/stdout",
+            "-b", "/proc/self/fd/2:/dev/stderr",
+            "-b", "/sdcard"
+        )
+        for (mnt in listOf("/apex", "/odm", "/product", "/system", "/system_ext", "/vendor",
+                           "/linkerconfig/ld.config.txt", "/linkerconfig/com.android.art/ld.config.txt")) {
+            if (File(mnt).exists()) {
+                bindArgs.add("-b")
+                bindArgs.add(mnt)
+            }
+        }
+
+        val bindsStr = bindArgs.joinToString(" ")
+        val loaderEnv = if (loader.isNotEmpty()) "PROOT_LOADER=$loader" else ""
+
+        return "export LD_LIBRARY_PATH=/product/lib64:$nativeDir $loaderEnv PROOT_TMP_DIR=/data/local/tmp; " +
+            "exec $proot --kill-on-exit $bindsStr -r $rootfs -0 --link2symlink --sysvipc -L -w /root " +
+            "/usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
+            "HOME=/root USER=root TERM=xterm-256color TMPDIR=/tmp LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/bash --login"
+    }
+
+    // Keep backwards compatibility for any callers of buildProotArgs/buildProotEnv
+    fun buildProotArgs(rootfs: String, filesDir: String): Array<String> {
         val args = mutableListOf("--kill-on-exit")
 
         fun bind(src: String, dst: String? = null) {
@@ -98,15 +141,17 @@ object ShellDiscovery {
         return args.toTypedArray()
     }
 
-    private fun buildProotEnv(filesDir: String, nativeDir: String): Array<String> {
+    fun buildProotEnv(filesDir: String, nativeDir: String): Array<String> {
         val env = mutableListOf(
-            "PROOT_TMP_DIR=$filesDir/tmp",
-            "LD_LIBRARY_PATH=$filesDir"
+            "PROOT_TMP_DIR=/data/local/tmp",
+            "LD_LIBRARY_PATH=/product/lib64:$nativeDir:$filesDir"
         )
         val loader = File(nativeDir, "libproot.so")
         val loader32 = File(nativeDir, "libproot32.so")
-        if (loader.exists()) env.add("PROOT_LOADER=${loader.absolutePath}")
-        if (loader32.exists()) env.add("PROOT_LOADER32=${loader32.absolutePath}")
+        if (File("/product/lib64/libproot.so").exists()) env.add("PROOT_LOADER=/product/lib64/libproot.so")
+        else if (loader.exists()) env.add("PROOT_LOADER=${loader.absolutePath}")
+        if (File("/product/lib/libproot.so").exists()) env.add("PROOT_LOADER32=/product/lib/libproot.so")
+        else if (loader32.exists()) env.add("PROOT_LOADER32=${loader32.absolutePath}")
         return env.toTypedArray()
     }
 }

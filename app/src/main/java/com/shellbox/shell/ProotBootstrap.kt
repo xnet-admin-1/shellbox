@@ -1,6 +1,7 @@
 package com.shellbox.shell
 
 import android.content.Context
+import android.os.Environment
 import android.util.Log
 import java.io.BufferedInputStream
 import java.io.File
@@ -11,20 +12,27 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Downloads and configures the proot Ubuntu rootfs.
- * Aligned with AIOPE's aiope_cli.py env_setup for reliability.
+ * Runs on top of a UID 2000 (shell) environment via xnix-shelld.
+ * Uses deps from XNet-NGO/deps repository.
  */
 object ProotBootstrap {
 
     private const val TAG = "ProotBootstrap"
-    private const val BOX_ROOTFS_VERSION = "rootfs_box_v3"
+    const val UID2000_ROOTFS = "/data/local/tmp/ubuntu"
+    private const val ROOTFS_VERSION = "rootfs_deps_v1"
 
     fun envDir(ctx: Context) = File(ctx.filesDir, "env")
     fun rootfsDir(ctx: Context) = File(envDir(ctx), "ubuntu")
+    fun rootfsPath(ctx: Context? = null): String = UID2000_ROOTFS
     private fun marker(ctx: Context, name: String) = File(envDir(ctx), ".$name")
 
     fun isInstalled(ctx: Context): Boolean {
+        try {
+            val check = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0").trim()
+            if (check == "1") return true
+        } catch (_: Exception) {}
         val rootfs = rootfsDir(ctx)
-        return marker(ctx, BOX_ROOTFS_VERSION).exists()
+        return marker(ctx, ROOTFS_VERSION).exists()
             && rootfs.isDirectory
             && File(rootfs, "bin/sh").isFile
     }
@@ -38,11 +46,15 @@ object ProotBootstrap {
             val f = File(nativeDir, name)
             if (f.isFile) return f
         }
+        val p = File("/product/bin/proot")
+        if (p.canExecute()) return p
+        val t = File("/data/local/tmp/proot")
+        if (t.canExecute()) return t
         return null
     }
 
     /**
-     * Re-apply patches to an existing rootfs (e.g. after app update).
+     * Re-apply patches to an existing rootfs.
      */
     fun ensurePatched(ctx: Context, log: (String) -> Unit) {
         val rootfs = rootfsDir(ctx)
@@ -50,82 +62,66 @@ object ProotBootstrap {
             fixProotStubs(rootfs)
             patchRootfs(rootfs, log)
         }
+        patchRootfsUid2000(log)
     }
 
     /**
-     * Full bootstrap: create dirs, copy talloc, download rootfs, patch.
+     * Full bootstrap: create dirs, download rootfs from XNet-NGO/deps, extract in UID 2000, patch.
      * Call on a background thread.
      */
     fun setup(ctx: Context, log: (String) -> Unit): Boolean {
         try {
-            val filesDir = ctx.filesDir
             val nativeDir = ctx.applicationInfo.nativeLibraryDir
-            val envDir = envDir(ctx)
-            val rootfs = rootfsDir(ctx)
 
-            // 1. Create dirs
-            log("Creating directories...")
-            listOf(envDir, rootfs, File(filesDir, "tmp"), File(filesDir, "home")).forEach { it.mkdirs() }
+            // 1. Prepare UID 2000 rootfs directory
+            log("Preparing UID 2000 environment in $UID2000_ROOTFS...")
+            ShelldClient.exec("mkdir -p $UID2000_ROOTFS /data/local/tmp")
 
-            // 2. Copy libtalloc.so → libtalloc.so.2 (proot needs this)
-            val tallocSrc = File(nativeDir, "libtalloc.so")
-            val tallocDst = File(filesDir, "libtalloc.so.2")
-            if (tallocSrc.exists()) {
-                tallocSrc.inputStream().use { i -> tallocDst.outputStream().use { o -> i.copyTo(o) } }
-                log("libtalloc.so.2 ready (${tallocDst.length()} bytes)")
-            } else {
-                log("ERROR: libtalloc.so not found in $nativeDir")
-                return false
+            val arch = System.getProperty("os.arch")?.lowercase() ?: "aarch64"
+            val pdArch = when {
+                "aarch64" in arch || "arm64" in arch -> "aarch64"
+                "armv7" in arch || "arm" in arch -> "arm"
+                "x86_64" in arch -> "x86_64"
+                else -> "aarch64"
             }
 
-            // 2b. Prepare bsdtar binary
-            val bsdtar = prepareBsdtar(ctx)
-            if (bsdtar == null) {
-                log("ERROR: libbsdtar.so not found in $nativeDir")
-                return false
-            }
+            // Using repo deps (XNet-NGO/deps)
+            val url = "https://github.com/XNet-NGO/deps/releases/download/rootfs-ubuntu-24.04.4/box-ubuntu-24.04-$pdArch.tar.xz"
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val tarball = File(downloadsDir, ".shellbox_ubuntu.tar.xz")
 
-            // 3. Download rootfs if needed — use box version marker to detect upgrades
-            val boxMarker = marker(ctx, BOX_ROOTFS_VERSION)
-            val rootfsHasSh = File(rootfs, "bin/sh").isFile
-            if (!boxMarker.exists() || !rootfsHasSh) {
-                // Remove old rootfs if present (upgrade path)
-                if (rootfs.isDirectory) {
-                    log("Removing old rootfs for Box upgrade...")
-                    rootfs.deleteRecursively()
-                    rootfs.mkdirs()
-                }
-
-                val arch = System.getProperty("os.arch")?.lowercase() ?: "aarch64"
-                val pdArch = when {
-                    "aarch64" in arch || "arm64" in arch -> "aarch64"
-                    "armv7" in arch || "arm" in arch -> "arm"
-                    "x86_64" in arch -> "x86_64"
-                    else -> "aarch64"
-                }
-                val url = "https://github.com/xnet-admin-1/box/releases/download/rootfs-ubuntu-24.04.4/box-ubuntu-24.04-$pdArch.tar.xz"
-                val tarball = File(envDir, "rootfs.tar.xz")
-
-                log("Downloading Ubuntu 24.04 rootfs ($pdArch)...")
+            val hasSh = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0").trim()
+            if (hasSh != "1") {
+                log("Downloading Ubuntu 24.04 rootfs ($pdArch) from XNet-NGO/deps...")
                 download(url, tarball, log)
 
-                log("Extracting rootfs...")
-                val ok = runBsdtar(bsdtar, tarball, rootfs, stripComponents = 1, log = log)
-                tarball.delete()
-                if (!ok || !File(rootfs, "bin/sh").isFile) {
-                    log("ERROR: Extraction failed - bin/sh not found in rootfs")
+                if (!tarball.exists() || tarball.length() == 0L) {
+                    log("ERROR: Download failed or empty file")
                     return false
                 }
-                boxMarker.writeText("box-ubuntu-24.04")
-                log("Rootfs extracted (Box release)")
+
+                log("Extracting rootfs via bsdtar in UID 2000...")
+                val bsdtarBin = if (File("/product/bin/bsdtar").canExecute()) "/product/bin/bsdtar"
+                    else "$nativeDir/libbsdtar.so"
+                val extractCmd = "LD_LIBRARY_PATH=$nativeDir:/product/lib64 " +
+                    "$bsdtarBin -xf ${tarball.absolutePath} -C $UID2000_ROOTFS --strip-components 1 --no-same-owner"
+                ShelldClient.exec(extractCmd, timeoutMs = 180_000)
+                try { tarball.delete() } catch (_: Exception) {}
+
+                val extractedSh = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0").trim()
+                if (extractedSh != "1") {
+                    log("ERROR: Extraction failed - bin/sh not found in $UID2000_ROOTFS")
+                    return false
+                }
+                log("Rootfs extracted successfully into UID 2000")
             } else {
-                log("Rootfs already installed")
+                log("Rootfs already installed in UID 2000")
             }
 
-            // 4. Patch rootfs
-            patchRootfs(rootfs, log)
+            // 2. Patch rootfs in UID 2000
+            patchRootfsUid2000(log)
 
-            // 5. Distro setup — run commands inside proot (locale, etc.)
+            // 3. Run distro setup inside proot
             distroSetup(ctx, log)
 
             log("Ubuntu environment ready!")
@@ -137,7 +133,20 @@ object ProotBootstrap {
         }
     }
 
+    private fun patchRootfsUid2000(log: (String) -> Unit) {
+        log("Patching UID 2000 rootfs...")
+        ShelldClient.exec("mkdir -p $UID2000_ROOTFS/etc/apt/apt.conf.d $UID2000_ROOTFS/etc/dpkg/dpkg.cfg.d $UID2000_ROOTFS/root $UID2000_ROOTFS/tmp $UID2000_ROOTFS/var/log/apt")
+        ShelldClient.exec("echo 'nameserver 8.8.8.8\\nnameserver 1.1.1.1' > $UID2000_ROOTFS/etc/resolv.conf")
+        ShelldClient.exec("echo 'Acquire::Check-Date \"false\";\\nAPT::Get::Assume-Yes \"true\";\\nAPT::Get::Show-Upgraded \"false\";\\nAPT::Install-Recommends \"false\";\\nAPT::Sandbox::User \"root\";\\nDPkg::Options {\"--force-unsafe-io\";};' > $UID2000_ROOTFS/etc/apt/apt.conf.d/99-agent-optimizations")
+        ShelldClient.exec("echo 'force-unsafe-io\\nforce-confdef\\nforce-confold\\nno-debsig' > $UID2000_ROOTFS/etc/dpkg/dpkg.cfg.d/99-agent-optimizations")
+        ShelldClient.exec("echo 'export TERM=xterm-256color\\nexport LANG=C.UTF-8\\nexport LC_ALL=C.UTF-8\\nexport COLORTERM=truecolor\\nalias ls=\"ls --color=auto\"\\nalias ll=\"ls -lah\"' > $UID2000_ROOTFS/root/.bashrc")
+        ShelldClient.exec("echo 'export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"\\nexport LANG=C.UTF-8\\nexport LC_ALL=C.UTF-8' > $UID2000_ROOTFS/root/.profile")
+        ShelldClient.exec("touch $UID2000_ROOTFS/.$ROOTFS_VERSION")
+    }
+
     private fun prepareBsdtar(ctx: Context): File? {
+        val p = File("/product/bin/bsdtar")
+        if (p.canExecute()) return p
         val f = File(ctx.applicationInfo.nativeLibraryDir, "libbsdtar.so")
         return if (f.exists() && f.canExecute()) f else null
     }
@@ -251,9 +260,6 @@ object ProotBootstrap {
     }
 
     private fun distroSetup(ctx: Context, log: (String) -> Unit) {
-        val setupMarker = File(envDir(ctx), ".distro_setup_done")
-        if (setupMarker.exists()) return
-
         log("Running distro setup...")
         try {
             // Fix any interrupted dpkg state first
@@ -262,7 +268,6 @@ object ProotBootstrap {
             ProotExecutor.exec(ctx,
                 "DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales 2>/dev/null || true",
                 timeoutMs = 60_000)
-            setupMarker.writeText("done")
             log("Distro setup complete")
         } catch (e: Exception) {
             Log.w(TAG, "distro_setup failed (non-fatal): ${e.message}")
@@ -361,13 +366,7 @@ object ProotBootstrap {
                     || it.name.endsWith(".postrm") || it.name.endsWith(".prerm")) }
                 .forEach { it.setExecutable(true) }
         }
-        // ELF interpreters
-        listOf("lib/ld-linux-aarch64.so.1", "lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
-               "lib/aarch64-linux-gnu/ld-2.39.so", "lib/ld-linux-armhf.so.3",
-               "usr/bin/env", "bin/sh", "bin/bash", "bin/dash").forEach { rel ->
-            val f = File(rootfs, rel)
-            if (f.exists() && !f.isDirectory) f.setExecutable(true)
-        }
+
         // .so files
         listOf("lib", "usr/lib").forEach { dir ->
             File(rootfs, dir).walkTopDown()
@@ -385,6 +384,7 @@ object ProotBootstrap {
         // apt config
         File(rootfs, "etc/apt/apt.conf.d").mkdirs()
         File(rootfs, "etc/apt/apt.conf.d/99-agent-optimizations").writeText("""
+Acquire::Check-Date "false";
 APT::Get::Assume-Yes "true";
 APT::Get::Show-Upgraded "false";
 APT::Install-Recommends "false";
@@ -428,102 +428,6 @@ export LC_ALL=C.UTF-8
 export DEBIAN_FRONTEND=noninteractive
 """.trimIndent() + "\n")
 
-        // profile.d
-        File(rootfs, "etc/profile.d").mkdirs()
-        File(rootfs, "etc/profile.d/mcpshell.sh").writeText("""
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export HOME=/root
-export TERM=xterm-256color
-export TMPDIR=/tmp
-export LANG=C.UTF-8
-export LC_ALL=C.UTF-8
-""".trimIndent() + "\n")
-
-        // Tool configs
-        File(rootfs, "root/.inputrc").writeText(
-            "set editing-mode emacs\nset bell-style none\nset completion-ignore-case on\nTAB: complete\n")
-        File(rootfs, "root/.wgetrc").writeText("quiet=on\ntimeout=30\ntries=3\n")
-        File(rootfs, "root/.curlrc").writeText("--silent\n--fail\n--connect-timeout 30\n--max-time 120\n--retry 3\n")
-        File(rootfs, "root/.gitconfig").writeText(
-            "[core]\n\tpager = cat\n[http]\n\tsslVerify = false\n[advice]\n\tdetachedHead = false\n")
-        File(rootfs, "root/.config/pip").mkdirs()
-        File(rootfs, "root/.config/pip/pip.conf").writeText(
-            "[global]\nno-cache-dir = true\nquiet = 1\nprogress-bar = off\n")
-        File(rootfs, "root/.npmrc").writeText("progress=false\nloglevel=error\n")
-        File(rootfs, "root/.nanorc").writeText("set autoindent\nset linenumbers\nset nobackup\n")
-
-        // Proot stubs
-        val stubScript = "#!/bin/sh\nexit 0\n"
-        val stubTargets = listOf(
-            "sbin/ldconfig", "usr/sbin/ldconfig", "usr/bin/ldconfig",
-            "usr/sbin/invoke-rc.d", "sbin/start-stop-daemon", "usr/sbin/start-stop-daemon"
-        )
-        for (rel in stubTargets) {
-            val f = File(rootfs, rel)
-            f.parentFile?.mkdirs()
-            if (f.exists() || rel.startsWith("sbin/") || rel.startsWith("usr/sbin/")) {
-                val bak = File(f.parent, f.name + ".real")
-                if (f.exists() && !bak.exists()) {
-                    val content = try { f.readText() } catch (_: Exception) { "" }
-                    if (content != stubScript) f.copyTo(bak)
-                }
-                f.writeText(stubScript)
-                f.setExecutable(true)
-            }
-        }
-
-        // Android GIDs
-        val groupFile = File(rootfs, "etc/group")
-        if (groupFile.exists()) {
-            val existing = groupFile.readText()
-            val knownGids = mapOf(
-                1000 to "system", 1001 to "radio", 1002 to "bluetooth", 1003 to "graphics",
-                1004 to "input", 1005 to "audio", 1006 to "camera", 1007 to "log",
-                1008 to "compass", 1009 to "mount", 1010 to "wifi", 1011 to "adb",
-                1012 to "install", 1013 to "media", 1014 to "dhcp", 1015 to "sdcard_rw",
-                1016 to "vpn", 1017 to "keystore", 1018 to "usb", 1019 to "drm",
-                1020 to "mdnsr", 1021 to "gps", 1023 to "media_rw", 1024 to "mtp",
-                1026 to "drmrpc", 1027 to "nfc", 1028 to "sdcard_r", 1029 to "clat",
-                1030 to "loop_radio", 1031 to "mediadrm", 1032 to "package_info",
-                1033 to "sdcard_pics", 1034 to "sdcard_av", 1035 to "sdcard_all",
-                1036 to "logd", 1037 to "shared_relro", 1038 to "dbus", 1039 to "tlsdate",
-                1040 to "mediaex", 1041 to "audioserver", 1042 to "metrics_coll",
-                1043 to "metricsd", 1044 to "webserv", 1045 to "debuggerd",
-                1046 to "mediacodec", 1047 to "cameraserver", 1048 to "firewall",
-                1049 to "trunks", 1050 to "nvram", 1051 to "dns", 1052 to "dns_tether",
-                1053 to "webview_zygote", 1054 to "vehicle_network",
-                1055 to "media_audio", 1056 to "media_video", 1057 to "media_image",
-                1058 to "tombstoned", 1059 to "media_obb", 1060 to "ese",
-                1061 to "ota_update", 1062 to "automotive_evs", 1063 to "lowpan",
-                1065 to "statsd", 1066 to "incidentd", 1067 to "secure_element",
-                1068 to "lmkd", 1069 to "llkd", 1070 to "iorapd", 1071 to "gpu_service",
-                1072 to "network_stack", 1073 to "gsid", 1074 to "fsverity_cert",
-                1075 to "credstore", 1076 to "external_storage", 1077 to "ext_data_rw",
-                1078 to "ext_obb_rw",
-                2000 to "shell", 2001 to "cache", 2002 to "diag",
-                3001 to "aid_net_bt_admin", 3002 to "aid_net_bt",
-                3003 to "aid_inet", 3004 to "aid_net_raw", 3005 to "aid_net_admin",
-                3006 to "aid_net_bw_stats", 3007 to "aid_net_bw_acct",
-                3008 to "aid_readproc", 3009 to "aid_wakelock", 3010 to "aid_uhid",
-                3011 to "aid_readtracefs", 3012 to "aid_debugfs_restrict",
-                9997 to "aid_everybody", 9998 to "aid_misc", 9999 to "aid_nobody"
-            )
-            val toAdd = knownGids.filter { (gid, _) -> ":$gid:" !in existing }
-                .map { (gid, name) -> "$name:x:$gid:" }
-            try {
-                val uid = android.os.Process.myUid()
-                val dynamicGids = listOf(
-                    "u0_a${uid - 10000}:x:$uid:",
-                    "all_a${uid - 10000}:x:${uid + 10000}:",
-                    "cache_$uid:x:${uid + 40000}:"
-                ).filter { entry -> ":${entry.split(":")[2]}:" !in existing }
-                val allNew = toAdd + dynamicGids
-                if (allNew.isNotEmpty()) groupFile.appendText(allNew.joinToString("\n", postfix = "\n"))
-            } catch (e: Exception) {
-                if (toAdd.isNotEmpty()) groupFile.appendText(toAdd.joinToString("\n", postfix = "\n"))
-            }
-        }
-
-        log("Rootfs patched (DNS, stubs, agent defaults, GIDs)")
+        log("Rootfs patched (DNS, stubs, agent defaults)")
     }
 }

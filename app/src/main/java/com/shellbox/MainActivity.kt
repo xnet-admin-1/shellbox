@@ -86,9 +86,19 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
             // Android Shell runs as UID 2000 via xnix-shelld
             val envMap = shell.env.associate { val parts = it.split("=", limit = 2); parts[0] to parts.getOrElse(1) { "" } }
             try {
-                ShelldTerminalSession(envMap, sessionCallback)
+                ShelldTerminalSession(null, envMap, sessionCallback)
             } catch (e: Exception) {
                 Log.w(TAG, "Falling back to local shell session: ${e.message}")
+                TerminalSession(shell.command, "/", shell.args, shell.env, sessionCallback)
+            }
+        } else if (shell.id == "ubuntu") {
+            // Ubuntu (proot) runs as UID 2000 via xnix-shelld
+            val envMap = shell.env.associate { val parts = it.split("=", limit = 2); parts[0] to parts.getOrElse(1) { "" } }
+            val prootCmd = ShellDiscovery.buildProotCommandLine(this)
+            try {
+                ShelldTerminalSession(prootCmd, envMap, sessionCallback)
+            } catch (e: Exception) {
+                Log.w(TAG, "Falling back to local Ubuntu session: ${e.message}")
                 TerminalSession(shell.command, "/", shell.args, shell.env, sessionCallback)
             }
         } else {

@@ -7,7 +7,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Executes commands inside a proot Ubuntu/Debian environment.
- * Tracks running process for external cancellation.
+ * Runs in UID 2000 via xnix-shelld.
  */
 object ProotExecutor {
 
@@ -15,29 +15,56 @@ object ProotExecutor {
     @Volatile private var currentProcess: Process? = null
 
     fun exec(context: Context, command: String, timeoutMs: Long = 30_000): String {
-        val filesDir = context.filesDir.absolutePath
-        val rootfs = File(filesDir, "env/ubuntu")
+        val rootfsPath = ProotBootstrap.rootfsPath(context)
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
 
-        val prootBin = ProotBootstrap.findProotXed(context)
-            ?: return "Error: proot binary not found in $nativeLibDir"
-        if (!rootfs.isDirectory) return "Error: Ubuntu rootfs not installed. Run setup first."
-
-        val talloc = File(filesDir, "libtalloc.so.2")
-        if (!talloc.exists()) {
-            val src = File(nativeLibDir, "libtalloc.so")
-            if (src.exists()) src.inputStream().use { i -> talloc.outputStream().use { o -> i.copyTo(o) } }
+        val prootBin = when {
+            File("/product/bin/proot").canExecute() -> "/product/bin/proot"
+            File("/data/local/tmp/proot").canExecute() -> "/data/local/tmp/proot"
+            File(nativeLibDir, "libproot-xed.so").exists() -> File(nativeLibDir, "libproot-xed.so").absolutePath
+            else -> "/data/local/tmp/proot"
+        }
+        val loader = when {
+            File("/product/lib64/libproot.so").exists() -> "/product/lib64/libproot.so"
+            File(nativeLibDir, "libproot.so").exists() -> File(nativeLibDir, "libproot.so").absolutePath
+            else -> ""
         }
 
-        File(filesDir, "tmp").mkdirs()
+        val loaderEnv = if (loader.isNotEmpty()) "PROOT_LOADER=$loader" else ""
+        val escapedCmd = command.replace("\"", "\\\"")
 
-        val args = buildProotArgs(rootfs, filesDir, command)
+        // Execute inside UID 2000 via xnix-shelld
+        val fullCmd = "export LD_LIBRARY_PATH=/product/lib64:$nativeLibDir $loaderEnv PROOT_TMP_DIR=/data/local/tmp; " +
+            "exec $prootBin --kill-on-exit -b /dev -b /dev/urandom:/dev/random -b /proc -b /sys -b /proc/self/fd:/dev/fd " +
+            "-b /sdcard -r $rootfsPath -0 --link2symlink -L -w /root " +
+            "/usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
+            "HOME=/root USER=root TERM=xterm-256color TMPDIR=/tmp LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/bash -c \"$escapedCmd\""
+
+        Log.d(TAG, "exec via shelld: $command")
+        try {
+            val output = ShelldClient.exec(fullCmd, timeoutMs)
+            val filtered = output.lines()
+                .filter { !it.startsWith("proot warning:") && !it.startsWith("proot info:") }
+                .joinToString("\n").trim()
+            if (filtered.isNotEmpty() && !filtered.startsWith("Error: xnix-shelld connect failed")) {
+                return filtered
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "shelld exec failed, falling back to local: ${e.message}")
+        }
+
+        // Fallback to local execution if shelld fails
+        val filesDir = context.filesDir.absolutePath
+        val localRootfs = File(filesDir, "env/ubuntu")
+        val localProotBin = ProotBootstrap.findProotXed(context)
+            ?: return "Error: proot binary not found in $nativeLibDir"
+        if (!localRootfs.isDirectory) return "Error: Ubuntu rootfs not installed. Run setup first."
+
+        val args = buildProotArgs(localRootfs, filesDir, command)
         val env = buildProotEnv(filesDir, nativeLibDir)
 
-        Log.d(TAG, "exec: ${prootBin.name} ${args.take(5).joinToString(" ")}...")
-
         return try {
-            val pb = ProcessBuilder(listOf(prootBin.absolutePath) + args)
+            val pb = ProcessBuilder(listOf(localProotBin.absolutePath) + args)
             pb.environment().clear()
             pb.environment().putAll(env)
             pb.redirectErrorStream(true)

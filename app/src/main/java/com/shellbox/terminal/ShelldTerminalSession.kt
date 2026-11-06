@@ -17,7 +17,8 @@ import java.io.IOException
  * own echo and line editing, so we simply pipe bytes in both directions.
  */
 class ShelldTerminalSession(
-    private val shellEnv: Map<String, String>,
+    private val command: String? = null,
+    private val shellEnv: Map<String, String> = emptyMap(),
     changeCallback: SessionChangedCallback
 ) : TerminalSession(
     "/system/bin/sh", "/data/local/tmp",
@@ -25,17 +26,17 @@ class ShelldTerminalSession(
     shellEnv.map { (k, v) -> "$k=$v" }.toTypedArray(),
     changeCallback
 ) {
-    // Backwards-compatible secondary constructor for any legacy callers
+    // Backwards-compatible constructor for default shell session
     constructor(
-        dexPath: String,
-        legacyEnv: Map<String, String>,
+        shellEnv: Map<String, String>,
         changeCallback: SessionChangedCallback
-    ) : this(legacyEnv, changeCallback)
+    ) : this(null, shellEnv, changeCallback)
 
     companion object {
         private const val TAG = "ShelldSession"
         private const val ESC = "\u001b"
         private val BANNER = "\r\n${ESC}[1;32m[X-NIX shell - uid=2000]${ESC}[0m\r\n"
+        private val BANNER_UBUNTU = "\r\n${ESC}[1;32m[X-NIX Ubuntu (proot) - uid=2000]${ESC}[0m\r\n"
         private val EXITED = "\r\n${ESC}[33m[X-NIX shell exited]${ESC}[0m\r\n"
     }
 
@@ -53,7 +54,7 @@ class ShelldTerminalSession(
 
     private fun launchPtyProcess(columns: Int, rows: Int) {
         try {
-            val fd = ShelldClient.openPty(null)
+            val fd = ShelldClient.openPty(command)
             if (fd < 0) {
                 Log.w(TAG, "xnix-shelld openPty failed ($fd)")
                 val msg = "\r\nxnix-shelld error: openPty failed (errno ${-fd})\r\n"
@@ -70,7 +71,7 @@ class ShelldTerminalSession(
             ptyOut = FileOutputStream(parcel.fileDescriptor)
             ptyActive = true
 
-            val bannerBytes = BANNER.toByteArray()
+            val bannerBytes = (if (command != null) BANNER_UBUNTU else BANNER).toByteArray()
             feedToEmulator(bannerBytes, 0, bannerBytes.size)
 
             // Reader: pump PTY master -> emulator. Real PTY, so no CRLF fixups.
