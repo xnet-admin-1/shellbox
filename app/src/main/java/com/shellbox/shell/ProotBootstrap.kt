@@ -144,7 +144,9 @@ object ProotBootstrap {
     private fun patchRootfsUid2000(log: (String) -> Unit) {
         log("Patching UID 2000 rootfs...")
         ShelldClient.exec("mkdir -p $UID2000_ROOTFS/etc/apt/apt.conf.d $UID2000_ROOTFS/etc/dpkg/dpkg.cfg.d $UID2000_ROOTFS/root $UID2000_ROOTFS/tmp $UID2000_ROOTFS/var/log/apt")
-        ShelldClient.exec("echo 'nameserver 8.8.8.8\\nnameserver 1.1.1.1' > $UID2000_ROOTFS/etc/resolv.conf")
+        ShelldClient.exec("printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > $UID2000_ROOTFS/etc/resolv.conf")
+        ShelldClient.exec("printf '127.0.0.1 localhost\\n::1 localhost ip6-localhost ip6-loopback\\n' > $UID2000_ROOTFS/etc/hosts")
+        ShelldClient.exec("chmod 644 $UID2000_ROOTFS/etc/resolv.conf $UID2000_ROOTFS/etc/hosts")
         ShelldClient.exec("echo 'Acquire::Check-Date \"false\";\\nAPT::Get::Assume-Yes \"true\";\\nAPT::Get::Show-Upgraded \"false\";\\nAPT::Install-Recommends \"false\";\\nAPT::Sandbox::User \"root\";\\nDPkg::Options {\"--force-unsafe-io\";};' > $UID2000_ROOTFS/etc/apt/apt.conf.d/99-agent-optimizations")
         ShelldClient.exec("echo 'force-unsafe-io\\nforce-confdef\\nforce-confold\\nno-debsig' > $UID2000_ROOTFS/etc/dpkg/dpkg.cfg.d/99-agent-optimizations")
         ShelldClient.exec("echo 'export TERM=xterm-256color\\nexport LANG=C.UTF-8\\nexport LC_ALL=C.UTF-8\\nexport COLORTERM=truecolor\\nalias ls=\"ls --color=auto\"\\nalias ll=\"ls -lah\"' > $UID2000_ROOTFS/root/.bashrc")
