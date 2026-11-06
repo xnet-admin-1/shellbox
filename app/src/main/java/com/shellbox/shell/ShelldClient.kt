@@ -34,13 +34,14 @@ object ShelldClient {
 
     /**
      * Convenience: run [command] and accumulate its output until EOF.
-     * Mirrors the 8000-char truncation behaviour of the original executor.
+     * Uses openPty to execute commands cleanly in the shell domain without
+     * SELinux fifo_file pipe restrictions.
      */
     fun exec(command: String, timeoutMs: Long = 15_000): String {
-        val fd = connectExec(command)
+        val fd = openPty(command)
         if (fd < 0) {
-            Log.w(TAG, "connectExec failed: errno=${-fd}")
-            return "Error: xnix-shelld connect failed (errno ${-fd})"
+            Log.w(TAG, "openPty failed: errno=${-fd}")
+            return "Error: xnix-shelld openPty failed (errno ${-fd})"
         }
 
         val sb = StringBuilder()
@@ -50,10 +51,15 @@ object ShelldClient {
                 FileInputStream(pfd.fileDescriptor).use { input ->
                     val buf = ByteArray(4096)
                     while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        sb.append(String(buf, 0, n))
-                        if (sb.length > 8000) break
+                        try {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            sb.append(String(buf, 0, n))
+                            if (sb.length > 8000) break
+                        } catch (_: java.io.IOException) {
+                            // EIO on PTY slave close is normal EOF on Linux
+                            break
+                        }
                     }
                 }
             } catch (_: Exception) {
@@ -67,8 +73,10 @@ object ShelldClient {
         }
         try { pfd.close() } catch (_: Exception) {}
 
-        val out = sb.toString().trim()
-        return if (out.length > 8000) out.take(8000) + "\n[truncated]"
-        else out.ifEmpty { "(no output)" }
+        val raw = sb.toString()
+        val nullIdx = raw.indexOf('\u0000')
+        val out = (if (nullIdx >= 0) raw.substring(0, nullIdx) else raw).trim()
+        Log.i(TAG, "exec: $command -> $out")
+        return if (out.length > 8000) out.take(8000) + "\n[truncated]" else out
     }
 }

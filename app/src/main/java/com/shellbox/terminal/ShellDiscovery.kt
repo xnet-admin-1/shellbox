@@ -62,9 +62,9 @@ object ShellDiscovery {
         val nativeDir = ctx?.applicationInfo?.nativeLibraryDir ?: "/product/app/ShellBox/lib/arm64"
         val proot = when {
             File("/product/bin/proot").canExecute() -> "/product/bin/proot"
-            File("/data/local/tmp/proot").canExecute() -> "/data/local/tmp/proot"
             File(nativeDir, "libproot-xed.so").exists() -> File(nativeDir, "libproot-xed.so").absolutePath
-            else -> "/data/local/tmp/proot"
+            File("/data/local/tmp/proot").canExecute() -> "/data/local/tmp/proot"
+            else -> "$nativeDir/libproot-xed.so"
         }
         val loader = when {
             File("/product/lib64/libproot.so").exists() -> "/product/lib64/libproot.so"
@@ -80,13 +80,9 @@ object ShellDiscovery {
             "-b", "/sys",
             "-b", "/proc/self/fd:/dev/fd",
             "-b", "$rootfs/tmp:/dev/shm",
-            "-b", "/proc/self/fd/0:/dev/stdin",
-            "-b", "/proc/self/fd/1:/dev/stdout",
-            "-b", "/proc/self/fd/2:/dev/stderr",
             "-b", "/sdcard"
         )
-        for (mnt in listOf("/apex", "/odm", "/product", "/system", "/system_ext", "/vendor",
-                           "/linkerconfig/ld.config.txt", "/linkerconfig/com.android.art/ld.config.txt")) {
+        for (mnt in listOf("/apex", "/odm", "/product", "/system", "/system_ext", "/vendor")) {
             if (File(mnt).exists()) {
                 bindArgs.add("-b")
                 bindArgs.add(mnt)

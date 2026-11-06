@@ -20,6 +20,7 @@ object ProotBootstrap {
     private const val TAG = "ProotBootstrap"
     const val UID2000_ROOTFS = "/data/local/tmp/ubuntu"
     private const val ROOTFS_VERSION = "rootfs_deps_v1"
+    private val isSettingUp = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun envDir(ctx: Context) = File(ctx.filesDir, "env")
     fun rootfsDir(ctx: Context) = File(envDir(ctx), "ubuntu")
@@ -28,8 +29,8 @@ object ProotBootstrap {
 
     fun isInstalled(ctx: Context): Boolean {
         try {
-            val check = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0").trim()
-            if (check == "1") return true
+            val check = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0")
+            if (check == "1" || check.startsWith("1")) return true
         } catch (_: Exception) {}
         val rootfs = rootfsDir(ctx)
         return marker(ctx, ROOTFS_VERSION).exists()
@@ -70,6 +71,10 @@ object ProotBootstrap {
      * Call on a background thread.
      */
     fun setup(ctx: Context, log: (String) -> Unit): Boolean {
+        if (!isSettingUp.compareAndSet(false, true)) {
+            log("Ubuntu setup is already in progress...")
+            return false
+        }
         try {
             val nativeDir = ctx.applicationInfo.nativeLibraryDir
 
@@ -88,10 +93,10 @@ object ProotBootstrap {
             // Using repo deps (XNet-NGO/deps)
             val url = "https://github.com/XNet-NGO/deps/releases/download/rootfs-ubuntu-24.04.4/box-ubuntu-24.04-$pdArch.tar.xz"
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val tarball = File(downloadsDir, ".shellbox_ubuntu.tar.xz")
+            val tarball = File(downloadsDir, ".shellbox_ubuntu_${System.currentTimeMillis()}.tar.xz")
 
-            val hasSh = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0").trim()
-            if (hasSh != "1") {
+            val hasSh = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0")
+            if (hasSh != "1" && !hasSh.startsWith("1")) {
                 log("Downloading Ubuntu 24.04 rootfs ($pdArch) from XNet-NGO/deps...")
                 download(url, tarball, log)
 
@@ -105,11 +110,12 @@ object ProotBootstrap {
                     else "$nativeDir/libbsdtar.so"
                 val extractCmd = "LD_LIBRARY_PATH=$nativeDir:/product/lib64 " +
                     "$bsdtarBin -xf ${tarball.absolutePath} -C $UID2000_ROOTFS --strip-components 1 --no-same-owner"
-                ShelldClient.exec(extractCmd, timeoutMs = 180_000)
+                val out = ShelldClient.exec(extractCmd, timeoutMs = 180_000)
+                if (out.isNotEmpty()) Log.d(TAG, "bsdtar output: $out")
                 try { tarball.delete() } catch (_: Exception) {}
 
-                val extractedSh = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0").trim()
-                if (extractedSh != "1") {
+                val extractedSh = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0")
+                if (extractedSh != "1" && !extractedSh.startsWith("1")) {
                     log("ERROR: Extraction failed - bin/sh not found in $UID2000_ROOTFS")
                     return false
                 }
@@ -130,6 +136,8 @@ object ProotBootstrap {
             log("ERROR: ${e.message}")
             Log.e(TAG, "setup failed", e)
             return false
+        } finally {
+            isSettingUp.set(false)
         }
     }
 

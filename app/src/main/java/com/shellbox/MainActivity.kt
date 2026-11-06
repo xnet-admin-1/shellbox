@@ -157,13 +157,32 @@ class MainActivity : AppCompatActivity(), TerminalViewClient {
         }.show()
     }
 
+    @Volatile private var isSettingUpUbuntu = false
+
     private fun setupUbuntu() {
+        if (isSettingUpUbuntu) {
+            Toast.makeText(this, "Ubuntu setup is already running...", Toast.LENGTH_SHORT).show()
+            return
+        }
+        isSettingUpUbuntu = true
         Toast.makeText(this, "Setting up Ubuntu...", Toast.LENGTH_LONG).show()
         Thread {
-            val ok = ProotBootstrap.setup(this) { msg -> Log.d(TAG, "Setup: $msg") }
-            runOnUiThread {
-                if (ok) { Toast.makeText(this, "Ubuntu ready!", Toast.LENGTH_SHORT).show(); openShell("ubuntu") }
-                else Toast.makeText(this, "Ubuntu setup failed", Toast.LENGTH_LONG).show()
+            try {
+                val ok = ProotBootstrap.setup(this) { msg -> Log.d(TAG, "Setup: $msg") }
+                runOnUiThread {
+                    isSettingUpUbuntu = false
+                    if (ok) {
+                        Toast.makeText(this, "Ubuntu ready!", Toast.LENGTH_SHORT).show()
+                        openShell("ubuntu")
+                    } else {
+                        Toast.makeText(this, "Ubuntu setup failed", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    isSettingUpUbuntu = false
+                    Toast.makeText(this, "Ubuntu setup failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }.start()
     }
