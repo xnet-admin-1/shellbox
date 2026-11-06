@@ -62,12 +62,13 @@ object ShellDiscovery {
         val nativeDir = ctx?.applicationInfo?.nativeLibraryDir ?: "/product/app/ShellBox/lib/arm64"
         val proot = when {
             File("/product/bin/proot").canExecute() -> "/product/bin/proot"
-            File(nativeDir, "libproot-xed.so").exists() -> File(nativeDir, "libproot-xed.so").absolutePath
             File("/data/local/tmp/proot").canExecute() -> "/data/local/tmp/proot"
-            else -> "$nativeDir/libproot-xed.so"
+            File(nativeDir, "libproot-xed.so").exists() -> File(nativeDir, "libproot-xed.so").absolutePath
+            else -> "/data/local/tmp/proot"
         }
         val loader = when {
             File("/product/lib64/libproot.so").exists() -> "/product/lib64/libproot.so"
+            File("/data/local/tmp/libproot.so").exists() -> "/data/local/tmp/libproot.so"
             File(nativeDir, "libproot.so").exists() -> File(nativeDir, "libproot.so").absolutePath
             else -> ""
         }
@@ -79,20 +80,26 @@ object ShellDiscovery {
             "-b", "/proc",
             "-b", "/sys",
             "-b", "/proc/self/fd:/dev/fd",
+            "-b", "/proc/self/fd/0:/dev/stdin",
+            "-b", "/proc/self/fd/1:/dev/stdout",
+            "-b", "/proc/self/fd/2:/dev/stderr",
             "-b", "$rootfs/tmp:/dev/shm",
             "-b", "/sdcard"
         )
-        for (mnt in listOf("/apex", "/odm", "/product", "/system", "/system_ext", "/vendor")) {
-            if (File(mnt).exists()) {
+        for (mnt in listOf("/apex", "/odm", "/product", "/system", "/system_ext", "/vendor",
+                           "/linkerconfig/ld.config.txt",
+                           "/linkerconfig/com.android.art/ld.config.txt")) {
+            val f = File(mnt)
+            if (f.exists()) {
                 bindArgs.add("-b")
-                bindArgs.add(mnt)
+                bindArgs.add(f.canonicalPath)
             }
         }
 
         val bindsStr = bindArgs.joinToString(" ")
         val loaderEnv = if (loader.isNotEmpty()) "PROOT_LOADER=$loader" else ""
 
-        return "export LD_LIBRARY_PATH=/product/lib64:$nativeDir $loaderEnv PROOT_TMP_DIR=/data/local/tmp; " +
+        return "export LD_LIBRARY_PATH=/product/lib64:/data/local/tmp:$nativeDir $loaderEnv PROOT_TMP_DIR=/data/local/tmp; " +
             "exec $proot --kill-on-exit $bindsStr -r $rootfs -0 --link2symlink --sysvipc -L -w /root " +
             "/usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
             "HOME=/root USER=root TERM=xterm-256color TMPDIR=/tmp LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/bash --login"

@@ -19,7 +19,7 @@ object ProotBootstrap {
 
     private const val TAG = "ProotBootstrap"
     const val UID2000_ROOTFS = "/data/local/tmp/ubuntu"
-    private const val ROOTFS_VERSION = "rootfs_deps_v1"
+    private const val ROOTFS_VERSION = "rootfs_ubuntu_26.04_v1"
     private val isSettingUp = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun envDir(ctx: Context) = File(ctx.filesDir, "env")
@@ -29,7 +29,7 @@ object ProotBootstrap {
 
     fun isInstalled(ctx: Context): Boolean {
         try {
-            val check = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0")
+            val check = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && test -f $UID2000_ROOTFS/.$ROOTFS_VERSION && echo 1 || echo 0")
             if (check == "1" || check.startsWith("1")) return true
         } catch (_: Exception) {}
         val rootfs = rootfsDir(ctx)
@@ -39,18 +39,18 @@ object ProotBootstrap {
     }
 
     /**
-     * Find proot-xed binary, handling Android renaming libproot-xed.so to libroot-xed.so.
+     * Find proot-xed binary, prioritizing system/tmp binaries to avoid DAC/SELinux sandbox restrictions.
      */
     fun findProotXed(ctx: Context): File? {
+        val p = File("/product/bin/proot")
+        if (p.canExecute()) return p
+        val t = File("/data/local/tmp/proot")
+        if (t.canExecute()) return t
         val nativeDir = File(ctx.applicationInfo.nativeLibraryDir)
         for (name in arrayOf("libproot-xed.so", "libroot-xed.so")) {
             val f = File(nativeDir, name)
             if (f.isFile) return f
         }
-        val p = File("/product/bin/proot")
-        if (p.canExecute()) return p
-        val t = File("/data/local/tmp/proot")
-        if (t.canExecute()) return t
         return null
     }
 
@@ -90,14 +90,15 @@ object ProotBootstrap {
                 else -> "aarch64"
             }
 
-            // Using repo deps (XNet-NGO/deps)
-            val url = "https://github.com/XNet-NGO/deps/releases/download/rootfs-ubuntu-24.04.4/box-ubuntu-24.04-$pdArch.tar.xz"
+            // Using repo deps (XNet-NGO/deps) - Ubuntu 26.04 Minimal Rootfs
+            val url = "https://github.com/XNet-NGO/deps/releases/download/rootfs-ubuntu-26.04/box-ubuntu-26.04-$pdArch.tar.xz"
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val tarball = File(downloadsDir, ".shellbox_ubuntu_${System.currentTimeMillis()}.tar.xz")
 
-            val hasSh = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && echo 1 || echo 0")
-            if (hasSh != "1" && !hasSh.startsWith("1")) {
-                log("Downloading Ubuntu 24.04 rootfs ($pdArch) from XNet-NGO/deps...")
+            val hasInstalled = ShelldClient.exec("test -f $UID2000_ROOTFS/bin/sh && test -f $UID2000_ROOTFS/.$ROOTFS_VERSION && echo 1 || echo 0")
+            if (hasInstalled != "1" && !hasInstalled.startsWith("1")) {
+                log("Downloading Ubuntu 26.04 rootfs ($pdArch) from XNet-NGO/deps...")
+                ShelldClient.exec("rm -rf $UID2000_ROOTFS && mkdir -p $UID2000_ROOTFS /data/local/tmp")
                 download(url, tarball, log)
 
                 if (!tarball.exists() || tarball.length() == 0L) {
@@ -106,9 +107,12 @@ object ProotBootstrap {
                 }
 
                 log("Extracting rootfs via bsdtar in UID 2000...")
-                val bsdtarBin = if (File("/product/bin/bsdtar").canExecute()) "/product/bin/bsdtar"
-                    else "$nativeDir/libbsdtar.so"
-                val extractCmd = "LD_LIBRARY_PATH=$nativeDir:/product/lib64 " +
+                val bsdtarBin = when {
+                    File("/product/bin/bsdtar").canExecute() -> "/product/bin/bsdtar"
+                    File("/data/local/tmp/bsdtar").canExecute() -> "/data/local/tmp/bsdtar"
+                    else -> "$nativeDir/libbsdtar.so"
+                }
+                val extractCmd = "LD_LIBRARY_PATH=/data/local/tmp:/product/lib64:$nativeDir " +
                     "$bsdtarBin -xf ${tarball.absolutePath} -C $UID2000_ROOTFS --strip-components 1 --no-same-owner"
                 val out = ShelldClient.exec(extractCmd, timeoutMs = 180_000)
                 if (out.isNotEmpty()) Log.d(TAG, "bsdtar output: $out")
@@ -143,7 +147,9 @@ object ProotBootstrap {
 
     private fun patchRootfsUid2000(log: (String) -> Unit) {
         log("Patching UID 2000 rootfs...")
-        ShelldClient.exec("mkdir -p $UID2000_ROOTFS/etc/apt/apt.conf.d $UID2000_ROOTFS/etc/dpkg/dpkg.cfg.d $UID2000_ROOTFS/root $UID2000_ROOTFS/tmp $UID2000_ROOTFS/var/log/apt")
+        ShelldClient.exec("mkdir -p $UID2000_ROOTFS/etc/apt/apt.conf.d $UID2000_ROOTFS/etc/dpkg/dpkg.cfg.d $UID2000_ROOTFS/root $UID2000_ROOTFS/tmp $UID2000_ROOTFS/var/log/apt $UID2000_ROOTFS/dev/shm $UID2000_ROOTFS/run")
+        ShelldClient.exec("chmod 1777 $UID2000_ROOTFS/tmp")
+        ShelldClient.exec("chmod 700 $UID2000_ROOTFS/root")
         ShelldClient.exec("printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > $UID2000_ROOTFS/etc/resolv.conf")
         ShelldClient.exec("printf '127.0.0.1 localhost\\n::1 localhost ip6-localhost ip6-loopback\\n' > $UID2000_ROOTFS/etc/hosts")
         ShelldClient.exec("chmod 644 $UID2000_ROOTFS/etc/resolv.conf $UID2000_ROOTFS/etc/hosts")
@@ -151,6 +157,22 @@ object ProotBootstrap {
         ShelldClient.exec("echo 'force-unsafe-io\\nforce-confdef\\nforce-confold\\nno-debsig' > $UID2000_ROOTFS/etc/dpkg/dpkg.cfg.d/99-agent-optimizations")
         ShelldClient.exec("echo 'export TERM=xterm-256color\\nexport LANG=C.UTF-8\\nexport LC_ALL=C.UTF-8\\nexport COLORTERM=truecolor\\nalias ls=\"ls --color=auto\"\\nalias ll=\"ls -lah\"' > $UID2000_ROOTFS/root/.bashrc")
         ShelldClient.exec("echo 'export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"\\nexport LANG=C.UTF-8\\nexport LC_ALL=C.UTF-8' > $UID2000_ROOTFS/root/.profile")
+        
+        // Ensure Android supplementary GIDs exist in /etc/group
+        val gidsScript = """
+            for g in "system:x:1000:root" "android_audio:x:1001:root" "graphics:x:1003:root" "input:x:1004:root" \
+                     "log:x:1007:root" "sdcard_rw:x:1015:root" "media_rw:x:1023:root" "sdcard_r:x:1028:root" \
+                     "uhid:x:1058:root" "net_bw_stats:x:1073:root" "ext_data_rw:x:1078:root" "ext_obb_rw:x:1079:root" \
+                     "shell:x:2000:root" "net_bt:x:3002:root" "inet:x:3003:root" "net_raw:x:3004:root" \
+                     "net_admin:x:3005:root" "readproc:x:3009:root" "wakelock:x:3010:root" "readtracefs:x:3012:root"; do
+                gid=${'$'}(echo "${'$'}g" | cut -d: -f3)
+                if ! grep -q ":${'$'}gid:" $UID2000_ROOTFS/etc/group 2>/dev/null; then
+                    echo "${'$'}g" >> $UID2000_ROOTFS/etc/group
+                fi
+            done
+            chmod 644 $UID2000_ROOTFS/etc/group
+        """.trimIndent()
+        ShelldClient.exec(gidsScript)
         ShelldClient.exec("touch $UID2000_ROOTFS/.$ROOTFS_VERSION")
     }
 

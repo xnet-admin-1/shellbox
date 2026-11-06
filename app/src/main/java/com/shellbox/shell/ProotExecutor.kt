@@ -26,6 +26,7 @@ object ProotExecutor {
         }
         val loader = when {
             File("/product/lib64/libproot.so").exists() -> "/product/lib64/libproot.so"
+            File("/data/local/tmp/libproot.so").exists() -> "/data/local/tmp/libproot.so"
             File(nativeLibDir, "libproot.so").exists() -> File(nativeLibDir, "libproot.so").absolutePath
             else -> ""
         }
@@ -33,10 +34,32 @@ object ProotExecutor {
         val loaderEnv = if (loader.isNotEmpty()) "PROOT_LOADER=$loader" else ""
         val escapedCmd = command.replace("\"", "\\\"")
 
+        val bindArgs = mutableListOf(
+            "-b", "/dev",
+            "-b", "/dev/urandom:/dev/random",
+            "-b", "/proc",
+            "-b", "/sys",
+            "-b", "/proc/self/fd:/dev/fd",
+            "-b", "/proc/self/fd/0:/dev/stdin",
+            "-b", "/proc/self/fd/1:/dev/stdout",
+            "-b", "/proc/self/fd/2:/dev/stderr",
+            "-b", "$rootfsPath/tmp:/dev/shm",
+            "-b", "/sdcard"
+        )
+        for (mnt in listOf("/apex", "/odm", "/product", "/system", "/system_ext", "/vendor",
+                           "/linkerconfig/ld.config.txt",
+                           "/linkerconfig/com.android.art/ld.config.txt")) {
+            val f = File(mnt)
+            if (f.exists()) {
+                bindArgs.add("-b")
+                bindArgs.add(f.canonicalPath)
+            }
+        }
+        val bindsStr = bindArgs.joinToString(" ")
+
         // Execute inside UID 2000 via xnix-shelld
-        val fullCmd = "export LD_LIBRARY_PATH=/product/lib64:$nativeLibDir $loaderEnv PROOT_TMP_DIR=/data/local/tmp; " +
-            "exec $prootBin --kill-on-exit -b /dev -b /dev/urandom:/dev/random -b /proc -b /sys -b /proc/self/fd:/dev/fd " +
-            "-b /sdcard -r $rootfsPath -0 --link2symlink -L -w /root " +
+        val fullCmd = "export LD_LIBRARY_PATH=/product/lib64:/data/local/tmp:$nativeLibDir $loaderEnv PROOT_TMP_DIR=/data/local/tmp; " +
+            "exec $prootBin --kill-on-exit $bindsStr -r $rootfsPath -0 --link2symlink --sysvipc -L -w /root " +
             "/usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
             "HOME=/root USER=root TERM=xterm-256color TMPDIR=/tmp LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/bash -c \"$escapedCmd\""
 
